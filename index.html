@@ -1,0 +1,1812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>School Accountant – Income & Expense Manager</title>
+    <!-- Supabase JS SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2">
+    </script>
+    <!-- Papa Parse for CSV -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js">
+    </script>
+    <style>
+        /* ───────────── RESET & BASE ───────────── */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Segoe UI', Roboto, system-ui, sans-serif;
+            background: #f4f7fc;
+            color: #1a2634;
+            padding: 16px;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+        }
+        #app {
+            max-width: 1360px;
+            width: 100%;
+            background: #fff;
+            border-radius: 28px;
+            box-shadow: 0 20px 60px rgba(0, 20, 40, 0.10);
+            padding: 24px 28px 40px;
+            transition: all 0.2s;
+        }
+        /* ───────────── HEADER ───────────── */
+        .app-header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 2px solid #e9edf4;
+            padding-bottom: 16px;
+            margin-bottom: 24px;
+        }
+        .app-header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            background: linear-gradient(145deg, #0b2a4a, #1d4b6e);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .app-header .sub {
+            font-size: 14px;
+            color: #5e6f8a;
+            font-weight: 500;
+            -webkit-text-fill-color: #5e6f8a;
+            background: none;
+        }
+        .header-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .header-actions .badge {
+            background: #eef2f8;
+            padding: 4px 16px;
+            border-radius: 40px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #1d4b6e;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        /* ───────────── TABS ───────────── */
+        .tabs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-bottom: 28px;
+            background: #f0f4fa;
+            border-radius: 60px;
+            padding: 4px;
+        }
+        .tabs button {
+            flex: 1 1 auto;
+            padding: 10px 22px;
+            border: none;
+            background: transparent;
+            font-weight: 600;
+            font-size: 14px;
+            border-radius: 40px;
+            cursor: pointer;
+            transition: 0.2s;
+            color: #3d5068;
+            letter-spacing: 0.2px;
+            white-space: nowrap;
+        }
+        .tabs button:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+        .tabs button.active {
+            background: #fff;
+            box-shadow: 0 4px 12px rgba(0, 20, 40, 0.08);
+            color: #0b2a4a;
+        }
+        .tab-content {
+            display: none;
+            animation: fadeUp 0.25s ease;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        @keyframes fadeUp {
+            0% {
+                opacity: 0.4;
+                transform: translateY(8px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        /* ───────────── CARDS (Dashboard) ───────────── */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 18px;
+            margin-bottom: 32px;
+        }
+        .stat-card {
+            background: #f9fbfe;
+            padding: 18px 20px;
+            border-radius: 18px;
+            border: 1px solid #e6ecf3;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+        }
+        .stat-card .label {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            color: #5e6f8a;
+        }
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: 700;
+            margin-top: 6px;
+            color: #0b2a4a;
+        }
+        .stat-card .value.positive {
+            color: #0f7b3a;
+        }
+        .stat-card .value.negative {
+            color: #b13e3e;
+        }
+        .stat-card .value.accent {
+            color: #1d4b6e;
+        }
+        /* ───────────── FORMS & TABLES ───────────── */
+        .section-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 14px;
+            color: #0b2a4a;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .section-title small {
+            font-weight: 400;
+            font-size: 14px;
+            color: #5e6f8a;
+        }
+        .form-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px 20px;
+            background: #f9fbfe;
+            padding: 16px 20px;
+            border-radius: 16px;
+            border: 1px solid #e6ecf3;
+            margin-bottom: 18px;
+            align-items: flex-end;
+        }
+        .form-row .field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            flex: 1 1 160px;
+            min-width: 120px;
+        }
+        .form-row .field label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            color: #5e6f8a;
+        }
+        .form-row .field input,
+        .form-row .field select {
+            padding: 8px 12px;
+            border: 1px solid #d7dfe9;
+            border-radius: 10px;
+            font-size: 14px;
+            background: #fff;
+            transition: 0.2s;
+            width: 100%;
+        }
+        .form-row .field input:focus,
+        .form-row .field select:focus {
+            outline: none;
+            border-color: #1d4b6e;
+            box-shadow: 0 0 0 3px rgba(29, 75, 110, 0.12);
+        }
+        .form-row .field input[type="file"] {
+            padding: 6px 4px;
+            border: none;
+            background: transparent;
+        }
+        .btn {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 40px;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            transition: 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #eef2f8;
+            color: #1a2634;
+        }
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+        }
+        .btn-primary {
+            background: #0b2a4a;
+            color: #fff;
+        }
+        .btn-primary:hover {
+            background: #1d4b6e;
+        }
+        .btn-success {
+            background: #0f7b3a;
+            color: #fff;
+        }
+        .btn-success:hover {
+            background: #129446;
+        }
+        .btn-danger {
+            background: #b13e3e;
+            color: #fff;
+        }
+        .btn-danger:hover {
+            background: #c94a4a;
+        }
+        .btn-outline {
+            background: transparent;
+            border: 1.5px solid #d7dfe9;
+        }
+        .btn-outline:hover {
+            background: #f0f4fa;
+            border-color: #b0c0d4;
+        }
+        .btn-sm {
+            padding: 4px 14px;
+            font-size: 12px;
+        }
+        .btn-xs {
+            padding: 2px 10px;
+            font-size: 11px;
+            border-radius: 30px;
+        }
+        /* ───────────── BULK TABLE ───────────── */
+        .bulk-table-wrap {
+            overflow-x: auto;
+            margin: 12px 0 16px;
+            border-radius: 14px;
+            border: 1px solid #e6ecf3;
+        }
+        .bulk-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+            min-width: 600px;
+        }
+        .bulk-table th {
+            background: #f0f4fa;
+            padding: 10px 12px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            color: #3d5068;
+            border-bottom: 2px solid #d7dfe9;
+            white-space: nowrap;
+        }
+        .bulk-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #eef2f8;
+            vertical-align: middle;
+        }
+        .bulk-table td input,
+        .bulk-table td select {
+            width: 100%;
+            padding: 6px 10px;
+            border: 1px solid #d7dfe9;
+            border-radius: 8px;
+            font-size: 13px;
+            background: #fff;
+            min-width: 70px;
+        }
+        .bulk-table td input:focus,
+        .bulk-table td select:focus {
+            outline: none;
+            border-color: #1d4b6e;
+            box-shadow: 0 0 0 3px rgba(29, 75, 110, 0.08);
+        }
+        .bulk-table td input[type="file"] {
+            padding: 4px 2px;
+            border: none;
+            background: transparent;
+        }
+        .bulk-table .row-actions {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+        .bulk-table .row-actions .btn {
+            padding: 2px 10px;
+            font-size: 11px;
+        }
+        /* ───────────── TRANSACTION LIST ───────────── */
+        .tx-list {
+            margin-top: 12px;
+        }
+        .tx-item {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px 16px;
+            padding: 12px 16px;
+            background: #f9fbfe;
+            border-radius: 12px;
+            border: 1px solid #e6ecf3;
+            margin-bottom: 8px;
+            transition: 0.15s;
+        }
+        .tx-item:hover {
+            background: #f0f4fa;
+        }
+        .tx-item .tx-type {
+            font-weight: 700;
+            font-size: 12px;
+            text-transform: uppercase;
+            padding: 2px 12px;
+            border-radius: 40px;
+            background: #e6ecf3;
+            color: #1a2634;
+        }
+        .tx-item .tx-type.income {
+            background: #d4edda;
+            color: #0f7b3a;
+        }
+        .tx-item .tx-type.expense {
+            background: #f8dddd;
+            color: #b13e3e;
+        }
+        .tx-item .tx-date {
+            font-weight: 500;
+            color: #3d5068;
+            font-size: 13px;
+        }
+        .tx-item .tx-particulars {
+            flex: 2 1 180px;
+            font-weight: 500;
+        }
+        .tx-item .tx-amount {
+            font-weight: 700;
+            font-size: 16px;
+            min-width: 80px;
+        }
+        .tx-item .tx-amount.income {
+            color: #0f7b3a;
+        }
+        .tx-item .tx-amount.expense {
+            color: #b13e3e;
+        }
+        .tx-item .tx-head {
+            font-size: 12px;
+            color: #5e6f8a;
+            background: #eef2f8;
+            padding: 2px 12px;
+            border-radius: 40px;
+        }
+        .tx-item .tx-attach {
+            font-size: 13px;
+            color: #1d4b6e;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+        .tx-item .tx-actions {
+            display: flex;
+            gap: 4px;
+            margin-left: auto;
+        }
+        .tx-item .tx-actions .btn {
+            padding: 2px 10px;
+            font-size: 11px;
+        }
+        /* ───────────── SETTINGS ───────────── */
+        .settings-group {
+            background: #f9fbfe;
+            border: 1px solid #e6ecf3;
+            border-radius: 16px;
+            padding: 20px 24px;
+            margin-bottom: 20px;
+        }
+        .settings-group h3 {
+            font-size: 16px;
+            margin-bottom: 12px;
+            color: #0b2a4a;
+        }
+        .settings-group .field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-bottom: 14px;
+            max-width: 440px;
+        }
+        .settings-group .field label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #3d5068;
+        }
+        .settings-group .field input {
+            padding: 8px 14px;
+            border: 1px solid #d7dfe9;
+            border-radius: 10px;
+            font-size: 14px;
+            background: #fff;
+        }
+        .settings-group .field input:focus {
+            outline: none;
+            border-color: #1d4b6e;
+            box-shadow: 0 0 0 3px rgba(29, 75, 110, 0.08);
+        }
+        .settings-group .status {
+            font-size: 14px;
+            padding: 8px 14px;
+            border-radius: 10px;
+            background: #eef2f8;
+            display: inline-block;
+        }
+        .settings-group .status.connected {
+            background: #d4edda;
+            color: #0f7b3a;
+        }
+        .settings-group .status.disconnected {
+            background: #f8dddd;
+            color: #b13e3e;
+        }
+        /* ───────────── MISC ───────────── */
+        .flex-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+        .gap-8 {
+            gap: 8px;
+        }
+        .mt-12 {
+            margin-top: 12px;
+        }
+        .mb-12 {
+            margin-bottom: 12px;
+        }
+        .text-muted {
+            color: #5e6f8a;
+            font-size: 13px;
+        }
+        .text-sm {
+            font-size: 13px;
+        }
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1a2634;
+            color: #fff;
+            padding: 12px 28px;
+            border-radius: 60px;
+            font-weight: 500;
+            font-size: 14px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.20);
+            z-index: 999;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+        }
+        .toast.show {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .toast.success {
+            background: #0f7b3a;
+        }
+        .toast.error {
+            background: #b13e3e;
+        }
+        /* ───────────── RESPONSIVE ───────────── */
+        @media (max-width: 700px) {
+            #app {
+                padding: 16px;
+            }
+            .app-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+            .tabs {
+                border-radius: 20px;
+                overflow-x: auto;
+                flex-wrap: nowrap;
+                padding: 4px;
+            }
+            .tabs button {
+                padding: 8px 16px;
+                font-size: 13px;
+                flex: 0 0 auto;
+            }
+            .stats-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+            .form-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .bulk-table-wrap {
+                font-size: 12px;
+            }
+            .bulk-table td,
+            .bulk-table th {
+                padding: 6px 8px;
+            }
+            .tx-item {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .tx-item .tx-actions {
+                margin-left: 0;
+                justify-content: flex-end;
+            }
+        }
+        @media (max-width: 460px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        /* scrollable table wrapper */
+        .scroll-x {
+            overflow-x: auto;
+        }
+        /* attachment preview */
+        .attach-preview {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 4px;
+        }
+        .attach-preview .file-tag {
+            background: #eef2f8;
+            padding: 2px 12px 2px 8px;
+            border-radius: 40px;
+            font-size: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .attach-preview .file-tag .remove {
+            cursor: pointer;
+            color: #b13e3e;
+            font-weight: 700;
+        }
+        /* empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #5e6f8a;
+        }
+        .empty-state .emoji {
+            font-size: 40px;
+            display: block;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app">
+        <!-- ─── HEADER ─── -->
+        <header class="app-header">
+            <div>
+                <h1>📘 School Accountant</h1>
+                <span class="sub">Income &amp; Expense Manager</span>
+            </div>
+            <div class="header-actions">
+                <span class="badge" id="localStatus">💾 Local</span>
+                <span class="badge" id="supaStatus">☁️ Disconnected</span>
+            </div>
+        </header>
+
+        <!-- ─── TABS ─── -->
+        <nav class="tabs" id="tabNav">
+            <button class="active" data-tab="dashboard">📊 Dashboard</button>
+            <button data-tab="income">💰 Income</button>
+            <button data-tab="expense">💸 Expenses</button>
+            <button data-tab="transactions">📋 All Transactions</button>
+            <button data-tab="settings">⚙️ Settings</button>
+        </nav>
+
+        <!-- ─── DASHBOARD ─── -->
+        <section class="tab-content active" id="tab-dashboard">
+            <div class="stats-grid" id="dashStats">
+                <div class="stat-card"><div class="label">Opening Balance</div><div class="value accent" id="dashOpening">0</div></div>
+                <div class="stat-card"><div class="label">Total Income</div><div class="value positive" id="dashIncome">0</div></div>
+                <div class="stat-card"><div class="label">Total Expenses</div><div class="value negative" id="dashExpense">0</div></div>
+                <div class="stat-card"><div class="label">Closing Balance</div><div class="value accent" id="dashClosing">0</div></div>
+                <div class="stat-card"><div class="label">Net Cash Flow</div><div class="value" id="dashNet">0</div></div>
+                <div class="stat-card"><div class="label">Transactions</div><div class="value" id="dashCount">0</div></div>
+            </div>
+            <div class="flex-row gap-8">
+                <button class="btn btn-primary" onclick="refreshDashboard()">🔄 Refresh</button>
+                <button class="btn btn-success" onclick="pushToSupabase()">☁️ Push to Supabase</button>
+                <button class="btn btn-outline" onclick="exportCSV()">📥 Export CSV</button>
+                <button class="btn btn-outline" onclick="document.getElementById('csvImportInput').click()">📤 Import CSV</button>
+                <input type="file" id="csvImportInput" accept=".csv" style="display:none" onchange="importCSV(event)" />
+            </div>
+            <div class="mt-12 text-muted text-sm" id="dashLastSync">Last sync: never</div>
+        </section>
+
+        <!-- ─── INCOME ─── -->
+        <section class="tab-content" id="tab-income">
+            <div class="section-title">💰 Bulk Income Entry <small>– add multiple receipts at once</small></div>
+            <div class="form-row">
+                <div class="field">
+                    <label>📅 Date</label>
+                    <input type="date" id="incomeDate" />
+                </div>
+                <div class="field" style="flex:0 0 180px;">
+                    <label>🔓 Opening Balance (₹)</label>
+                    <input type="number" id="incomeOpening" step="0.01" placeholder="e.g. 41687" />
+                </div>
+                <div class="field" style="flex:0 0 auto;">
+                    <button class="btn btn-primary" onclick="addIncomeRow()">＋ Add Row</button>
+                </div>
+                <div class="field" style="flex:0 0 auto;">
+                    <button class="btn btn-success" onclick="submitIncomeBulk()">✅ Submit All</button>
+                </div>
+            </div>
+            <div class="bulk-table-wrap">
+                <table class="bulk-table" id="incomeTable">
+                    <thead>
+                        <tr>
+                            <th style="min-width:100px;">Receipt No.</th>
+                            <th style="min-width:160px;">Particulars</th>
+                            <th style="min-width:100px;">Amount (₹)</th>
+                            <th style="min-width:120px;">Head</th>
+                            <th style="min-width:100px;">Attachment</th>
+                            <th style="width:70px;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="incomeTableBody">
+                        <!-- rows added by JS -->
+                    </tbody>
+                </table>
+            </div>
+            <div id="incomePreview" class="mt-12 text-muted text-sm"></div>
+            <div class="mt-12">
+                <h4 style="font-weight:600;font-size:14px;margin-bottom:6px;">📋 Recent Income</h4>
+                <div id="incomeList" class="tx-list"></div>
+            </div>
+        </section>
+
+        <!-- ─── EXPENSES ─── -->
+        <section class="tab-content" id="tab-expense">
+            <div class="section-title">💸 Bulk Expense Entry <small>– add multiple vouchers at once</small></div>
+            <div class="form-row">
+                <div class="field">
+                    <label>📅 Date</label>
+                    <input type="date" id="expenseDate" />
+                </div>
+                <div class="field" style="flex:0 0 auto;">
+                    <button class="btn btn-primary" onclick="addExpenseRow()">＋ Add Row</button>
+                </div>
+                <div class="field" style="flex:0 0 auto;">
+                    <button class="btn btn-success" onclick="submitExpenseBulk()">✅ Submit All</button>
+                </div>
+            </div>
+            <div class="bulk-table-wrap">
+                <table class="bulk-table" id="expenseTable">
+                    <thead>
+                        <tr>
+                            <th style="min-width:100px;">Voucher No.</th>
+                            <th style="min-width:160px;">Particulars</th>
+                            <th style="min-width:100px;">Bank/Treasury (₹)</th>
+                            <th style="min-width:80px;">Cheque Count</th>
+                            <th style="min-width:120px;">Head</th>
+                            <th style="min-width:100px;">Attachment</th>
+                            <th style="width:70px;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="expenseTableBody">
+                        <!-- rows added by JS -->
+                    </tbody>
+                </table>
+            </div>
+            <div id="expensePreview" class="mt-12 text-muted text-sm"></div>
+            <div class="mt-12">
+                <h4 style="font-weight:600;font-size:14px;margin-bottom:6px;">📋 Recent Expenses</h4>
+                <div id="expenseList" class="tx-list"></div>
+            </div>
+        </section>
+
+        <!-- ─── TRANSACTIONS ─── -->
+        <section class="tab-content" id="tab-transactions">
+            <div class="section-title">📋 All Transactions</div>
+            <div class="flex-row gap-8 mb-12">
+                <input type="date" id="txFilterDateFrom" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;" />
+                <span class="text-muted">to</span>
+                <input type="date" id="txFilterDateTo" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;" />
+                <select id="txFilterType" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;">
+                    <option value="all">All Types</option>
+                    <option value="income">Income</option>
+                    <option value="expense">Expense</option>
+                </select>
+                <input type="text" id="txFilterSearch" placeholder="Search particulars…" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;min-width:140px;" />
+                <button class="btn btn-primary btn-sm" onclick="renderTransactions()">🔍 Filter</button>
+                <button class="btn btn-outline btn-sm" onclick="resetTxFilters()">Reset</button>
+            </div>
+            <div id="transactionList" class="tx-list"></div>
+            <div class="text-muted text-sm mt-12" id="txCountDisplay"></div>
+        </section>
+
+        <!-- ─── SETTINGS ─── -->
+        <section class="tab-content" id="tab-settings">
+            <div class="section-title">⚙️ Settings</div>
+
+            <div class="settings-group">
+                <h3>☁️ Supabase Configuration</h3>
+                <div class="field">
+                    <label>Supabase URL</label>
+                    <input type="text" id="supaUrl" placeholder="https://your-project.supabase.co" />
+                </div>
+                <div class="field">
+                    <label>Supabase Anon Key</label>
+                    <input type="text" id="supaKey" placeholder="your-anon-key" />
+                </div>
+                <div class="field">
+                    <label>Table Name (transactions)</label>
+                    <input type="text" id="supaTable" value="transactions" />
+                </div>
+                <div class="field">
+                    <label>Bucket Name (for receipts)</label>
+                    <input type="text" id="supaBucket" value="receipts" />
+                </div>
+                <div class="flex-row gap-8">
+                    <button class="btn btn-primary" onclick="saveSupabaseConfig()">💾 Save Config</button>
+                    <button class="btn btn-success" onclick="testSupabaseConnection()">🔌 Test Connection</button>
+                    <button class="btn btn-danger" onclick="clearSupabaseConfig()">🗑️ Clear Config</button>
+                </div>
+                <div class="mt-12">
+                    <span class="status disconnected" id="supaStatusDetail">Not configured</span>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>📦 Data Management</h3>
+                <div class="flex-row gap-8">
+                    <button class="btn btn-primary" onclick="exportAllData()">📥 Export All Data (JSON)</button>
+                    <button class="btn btn-outline" onclick="document.getElementById('jsonImportInput').click()">📤 Import Data (JSON)</button>
+                    <input type="file" id="jsonImportInput" accept=".json" style="display:none" onchange="importAllData(event)" />
+                    <button class="btn btn-danger" onclick="clearAllLocalData()">⚠️ Clear All Local Data</button>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>📤 CSV Import / Export</h3>
+                <div class="flex-row gap-8">
+                    <button class="btn btn-primary" onclick="exportCSV()">📥 Export CSV</button>
+                    <button class="btn btn-outline" onclick="document.getElementById('csvImportInput2').click()">📤 Import CSV</button>
+                    <input type="file" id="csvImportInput2" accept=".csv" style="display:none" onchange="importCSV(event)" />
+                </div>
+                <div class="text-muted text-sm mt-12">CSV format: type,date,reference,particulars,amount,head,bankAmount,chequeCount</div>
+            </div>
+
+            <div class="settings-group">
+                <h3>📊 About</h3>
+                <p class="text-muted text-sm">School Accountant v1.0 — Data stored locally in your browser. Sync to Supabase for cloud backup &amp; sharing.</p>
+            </div>
+        </section>
+
+        <!-- ─── TOAST ─── -->
+        <div id="toast" class="toast"></div>
+    </div>
+
+    <script>
+        // ════════════════════════════════════════════════════════════════
+        //  STATE
+        // ════════════════════════════════════════════════════════════════
+        let transactions = [];
+        let nextId = 1;
+        const STORAGE_KEY = 'school_accountant_data';
+        const CONFIG_KEY = 'school_accountant_config';
+
+        // ─── Supabase client ───
+        let supabaseClient = null;
+        let supaConfig = null;
+
+        // ─── DOM refs ───
+        const $ = (s) => document.querySelector(s);
+        const $$ = (s) => document.querySelectorAll(s);
+
+        // ─── Toast ───
+        function showToast(msg, type = 'info', duration = 3000) {
+            const t = $('#toast');
+            t.textContent = msg;
+            t.className = 'toast show ' + type;
+            clearTimeout(t._hide);
+            t._hide = setTimeout(() => { t.classList.remove('show'); }, duration);
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  DATA LAYER
+        // ════════════════════════════════════════════════════════════════
+        function loadData() {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (raw) {
+                try {
+                    const parsed = JSON.parse(raw);
+                    transactions = parsed.transactions || [];
+                    nextId = parsed.nextId || 1;
+                } catch (e) {
+                    transactions = [];
+                    nextId = 1;
+                }
+            } else {
+                // seed with some demo data from the images
+                const demo = [
+                    { id: 1, type: 'income', date: '2026-06-23', reference: '22', particulars: 'Opening balance 41,687',
+                        amount: 41687, head: 'Opening', bankAmount: 0, chequeCount: 0, attachments: [] },
+                    { id: 2, type: 'income', date: '2026-06-23', reference: '205', particulars: 'B. Rithvik (Nv)',
+                        amount: 1000, head: 'Registration', bankAmount: 0, chequeCount: 0, attachments: [] },
+                    { id: 3, type: 'income', date: '2026-06-23', reference: '204', particulars: 'Rithvik Adiyal (T)',
+                        amount: 1000, head: 'Registration', bankAmount: 0, chequeCount: 0, attachments: [] },
+                    { id: 4, type: 'income', date: '2026-06-23', reference: '206', particulars: 'M. Vaghnavi (PP)',
+                        amount: 1000, head: 'Registration', bankAmount: 0, chequeCount: 0, attachments: [] },
+                    { id: 5, type: 'income', date: '2026-06-23', reference: '208',
+                        particulars: 'M. Mohammel Zair (T)', amount: 1000, head: 'Registration', bankAmount: 0,
+                        chequeCount: 0, attachments: [] },
+                    { id: 6, type: 'income', date: '2026-06-23', reference: '209', particulars: 'B. Sai Pallavi (T)',
+                        amount: 1000, head: 'Registration', bankAmount: 0, chequeCount: 0, attachments: [] },
+                    { id: 7, type: 'income', date: '2026-06-23', reference: '210', particulars: 'B. Rithik (PP)',
+                        amount: -1000, head: 'Registration', bankAmount: 0, chequeCount: 0, attachments: [] },
+                    { id: 8, type: 'income', date: '2026-06-23', reference: '1520', particulars: 'P. Rithika (T)',
+                        amount: 10000, head: 'Tuition', bankAmount: 0, chequeCount: 0, attachments: [] },
+                    { id: 9, type: 'income', date: '2026-06-23', reference: '211', particulars: 'V. Vipash (PP)',
+                        amount: 1000, head: 'Registration', bankAmount: 0, chequeCount: 0, attachments: [] },
+                    { id: 10, type: 'income', date: '2026-06-23', reference: '212', particulars: 'Vashwanth (PP)',
+                        amount: 1000, head: 'Registration', bankAmount: 0, chequeCount: 0, attachments: [] },
+                    { id: 11, type: 'expense', date: '2026-06-22', reference: '1', particulars: 'Treatment',
+                        amount: 140, head: 'Medical', bankAmount: 140, chequeCount: 10, attachments: [] },
+                    { id: 12, type: 'expense', date: '2026-06-22', reference: '2',
+                        particulars: 'Purchase of depot in school bike', amount: 100, head: 'Equipment', bankAmount: 100,
+                        chequeCount: 10, attachments: [] },
+                    { id: 13, type: 'expense', date: '2026-06-22', reference: '3',
+                        particulars: 'Ten thousand mats for yoga day celebration', amount: 2000, head: 'Event',
+                        bankAmount: 2000, chequeCount: 10, attachments: [] },
+                    { id: 14, type: 'expense', date: '2026-06-20', reference: '4',
+                        particulars: 'PNB school account deposit', amount: 44000, head: 'Bank Deposit',
+                        bankAmount: 44000, chequeCount: 10, attachments: [] },
+                    { id: 15, type: 'expense', date: '2026-06-22', reference: '5', particulars: 'Stationary for registers',
+                        amount: 680, head: 'Stationary', bankAmount: 680, chequeCount: 10, attachments: [] },
+                    { id: 16, type: 'expense', date: '2026-06-22', reference: '6', particulars: 'Refreshment',
+                        amount: 180, head: 'Refreshment', bankAmount: 180, chequeCount: 10, attachments: [] },
+                ];
+                transactions = demo;
+                nextId = 17;
+                saveData();
+            }
+            // ensure each tx has attachments array
+            transactions.forEach(t => { if (!t.attachments) t.attachments = []; });
+            // ensure bankAmount and chequeCount exist
+            transactions.forEach(t => {
+                if (t.bankAmount === undefined) t.bankAmount = 0;
+                if (t.chequeCount === undefined) t.chequeCount = 0;
+            });
+        }
+
+        function saveData() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({ transactions, nextId }));
+            updateLocalStatus();
+            refreshDashboard();
+            renderIncomeList();
+            renderExpenseList();
+            renderTransactions();
+            updatePreviewCounts();
+        }
+
+        function getNextId() { return nextId++; }
+
+        function addTransaction(tx) {
+            tx.id = getNextId();
+            tx.attachments = tx.attachments || [];
+            transactions.push(tx);
+            saveData();
+            return tx;
+        }
+
+        function deleteTransaction(id) {
+            transactions = transactions.filter(t => t.id !== id);
+            saveData();
+        }
+
+        function updateTransaction(id, updates) {
+            const idx = transactions.findIndex(t => t.id === id);
+            if (idx === -1) return null;
+            transactions[idx] = { ...transactions[idx], ...updates };
+            saveData();
+            return transactions[idx];
+        }
+
+        function getTransactions(filters = {}) {
+            let list = [...transactions];
+            if (filters.type && filters.type !== 'all') {
+                list = list.filter(t => t.type === filters.type);
+            }
+            if (filters.dateFrom) {
+                list = list.filter(t => t.date >= filters.dateFrom);
+            }
+            if (filters.dateTo) {
+                list = list.filter(t => t.date <= filters.dateTo);
+            }
+            if (filters.search) {
+                const s = filters.search.toLowerCase();
+                list = list.filter(t => t.particulars.toLowerCase().includes(s) || t.reference.toLowerCase().includes(s));
+            }
+            return list.sort((a, b) => b.id - a.id);
+        }
+
+        // ─── Dashboard calculations ───
+        function calcDashboard() {
+            const opening = transactions.filter(t => t.type === 'income' && t.head === 'Opening');
+            const openingBal = opening.reduce((sum, t) => sum + t.amount, 0);
+            const income = transactions.filter(t => t.type === 'income' && t.head !== 'Opening');
+            const totalIncome = income.reduce((sum, t) => sum + t.amount, 0);
+            const expenses = transactions.filter(t => t.type === 'expense');
+            const totalExpense = expenses.reduce((sum, t) => sum + t.amount, 0);
+            const closing = openingBal + totalIncome - totalExpense;
+            const net = totalIncome - totalExpense;
+            return { openingBal, totalIncome, totalExpense, closing, net, count: transactions.length };
+        }
+
+        function refreshDashboard() {
+            const d = calcDashboard();
+            document.getElementById('dashOpening').textContent = d.openingBal.toFixed(2);
+            document.getElementById('dashIncome').textContent = d.totalIncome.toFixed(2);
+            document.getElementById('dashExpense').textContent = d.totalExpense.toFixed(2);
+            document.getElementById('dashClosing').textContent = d.closing.toFixed(2);
+            const netEl = document.getElementById('dashNet');
+            netEl.textContent = d.net.toFixed(2);
+            netEl.className = 'value ' + (d.net >= 0 ? 'positive' : 'negative');
+            document.getElementById('dashCount').textContent = d.count;
+            // last sync
+            const lastSync = localStorage.getItem('school_accountant_last_sync');
+            if (lastSync) {
+                document.getElementById('dashLastSync').textContent = 'Last sync: ' + new Date(parseInt(lastSync))
+                .toLocaleString();
+            } else {
+                document.getElementById('dashLastSync').textContent = 'Last sync: never';
+            }
+        }
+
+        function updateLocalStatus() {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            const count = transactions.length;
+            document.getElementById('localStatus').textContent = '💾 Local (' + count + ' tx)';
+        }
+
+        // ─── Preview counts ───
+        function updatePreviewCounts() {
+            const inc = transactions.filter(t => t.type === 'income' && t.head !== 'Opening');
+            const exp = transactions.filter(t => t.type === 'expense');
+            document.getElementById('incomePreview').textContent = '📊 Income entries: ' + inc.length +
+                '  |  Total: ₹' + inc.reduce((s, t) => s + t.amount, 0).toFixed(2);
+            document.getElementById('expensePreview').textContent = '📊 Expense entries: ' + exp.length +
+                '  |  Total: ₹' + exp.reduce((s, t) => s + t.amount, 0).toFixed(2);
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  INCOME BULK
+        // ════════════════════════════════════════════════════════════════
+        let incomeRowCount = 0;
+
+        function addIncomeRow(data = {}) {
+            const tbody = document.getElementById('incomeTableBody');
+            const row = document.createElement('tr');
+            const idx = incomeRowCount++;
+            row.dataset.idx = idx;
+            row.innerHTML = `
+            <td><input type="text" class="inc-ref" value="${data.reference || ''}" placeholder="Receipt No." /></td>
+            <td><input type="text" class="inc-particulars" value="${data.particulars || ''}" placeholder="Description" /></td>
+            <td><input type="number" class="inc-amount" value="${data.amount || ''}" step="0.01" placeholder="0.00" /></td>
+            <td><input type="text" class="inc-head" value="${data.head || ''}" placeholder="Head" /></td>
+            <td><input type="file" class="inc-file" accept="image/*,application/pdf" multiple /></td>
+            <td><button class="btn btn-danger btn-xs" onclick="removeIncomeRow(this)">✕</button></td>
+          `;
+            tbody.appendChild(row);
+            // if file data is provided, store it (for edit later)
+            if (data.fileData) {
+                // we handle file data separately
+            }
+        }
+
+        function removeIncomeRow(btn) {
+            const row = btn.closest('tr');
+            row.remove();
+        }
+
+        function submitIncomeBulk() {
+            const date = document.getElementById('incomeDate').value;
+            if (!date) { showToast('Please select a date.', 'error'); return; }
+            const openingInput = document.getElementById('incomeOpening');
+            const openingVal = parseFloat(openingInput.value);
+            if (!isNaN(openingVal) && openingVal !== 0) {
+                // add opening balance as income
+                addTransaction({
+                    type: 'income',
+                    date: date,
+                    reference: 'OPEN',
+                    particulars: 'Opening balance',
+                    amount: openingVal,
+                    head: 'Opening',
+                    bankAmount: 0,
+                    chequeCount: 0,
+                    attachments: []
+                });
+                openingInput.value = '';
+                showToast('✅ Opening balance added: ₹' + openingVal.toFixed(2), 'success');
+            }
+
+            const rows = document.querySelectorAll('#incomeTableBody tr');
+            let added = 0;
+            rows.forEach(row => {
+                const ref = row.querySelector('.inc-ref').value.trim();
+                const particulars = row.querySelector('.inc-particulars').value.trim();
+                const amount = parseFloat(row.querySelector('.inc-amount').value);
+                const head = row.querySelector('.inc-head').value.trim() || 'General';
+                const fileInput = row.querySelector('.inc-file');
+                if (!ref || !particulars || isNaN(amount) || amount === 0) {
+                    // skip incomplete rows
+                    return;
+                }
+                // handle files
+                const attachments = [];
+                if (fileInput && fileInput.files.length > 0) {
+                    for (let f of fileInput.files) {
+                        const reader = new FileReader();
+                        // We'll store base64 in localStorage; for Supabase we upload later.
+                        // For simplicity, store as data URL.
+                        // But we need to handle async. We'll collect and store as data URLs.
+                        // Since we're in a loop, we'll use a synchronous approach with FileReader sync? No.
+                        // We'll use a simpler approach: store file names and base64 data.
+                        // For now, we'll push a placeholder and handle later.
+                        // Actually, let's use a callback approach - but for simplicity, we'll store base64.
+                        // We'll read files and store base64 in the attachment.
+                        try {
+                            const dataUrl = URL.createObjectURL(f);
+                            attachments.push({ name: f.name, type: f.type, data: dataUrl, size: f.size });
+                        } catch (e) {
+                            // fallback
+                            attachments.push({ name: f.name, type: f.type, data: '', size: f.size });
+                        }
+                    }
+                }
+                // Store in localStorage as base64 - we'll convert to base64 for storage.
+                // But to keep it simple, we'll use object URLs (which are ephemeral) - not good for localStorage.
+                // Let's use FileReader to read as base64.
+                // However, we can't do sync file reads. Let's handle this differently.
+                // We'll store the file data as base64 after reading.
+                // For now, we'll just store the file names and read them later.
+                // Actually, let's use a simpler approach: read files as base64 and store.
+                // We'll process files asynchronously.
+
+                // For now, we'll add the transaction without the file data, and then update it later.
+                // Or we can read files synchronously using FileReaderSync (not available in all browsers).
+                // Let's use a different approach: we'll read files as base64 using FileReader and then add the transaction.
+                // We'll use a promise to handle this.
+
+                // For simplicity, I'll store the file as base64 using FileReader.
+                // But since this is a bulk operation, we'll handle files one by one.
+                // I'll implement a simpler version: store file as base64 in the transaction.
+                // For the initial version, let's just store the file name and read it later.
+                // Actually, let's do it properly.
+
+                // We'll use a helper to read files as base64.
+                const filePromises = [];
+                if (fileInput && fileInput.files.length > 0) {
+                    for (let f of fileInput.files) {
+                        filePromises.push(readFileAsBase64(f));
+                    }
+                }
+
+                if (filePromises.length > 0) {
+                    Promise.all(filePromises).then(results => {
+                        const attachData = results.map((data, i) => ({
+                            name: fileInput.files[i].name,
+                            type: fileInput.files[i].type,
+                            data: data,
+                            size: fileInput.files[i].size
+                        }));
+                        addTransaction({
+                            type: 'income',
+                            date: date,
+                            reference: ref,
+                            particulars: particulars,
+                            amount: amount,
+                            head: head,
+                            bankAmount: 0,
+                            chequeCount: 0,
+                            attachments: attachData
+                        });
+                        added++;
+                        if (added === rows.length) {
+                            showToast('✅ ' + added + ' income entries added!', 'success');
+                            clearIncomeRows();
+                            renderIncomeList();
+                            renderTransactions();
+                            refreshDashboard();
+                            updatePreviewCounts();
+                        }
+                    }).catch(err => {
+                        showToast('Error reading files: ' + err.message, 'error');
+                    });
+                } else {
+                    // No files, add directly
+                    addTransaction({
+                        type: 'income',
+                        date: date,
+                        reference: ref,
+                        particulars: particulars,
+                        amount: amount,
+                        head: head,
+                        bankAmount: 0,
+                        chequeCount: 0,
+                        attachments: []
+                    });
+                    added++;
+                }
+            });
+
+            // If no files were processed, handle the added count
+            if (added > 0) {
+                // Check if any rows had files - if so, the Promise.all above handles it
+                // But we need to check if any rows had files
+                const hasFiles = Array.from(rows).some(row => {
+                    const fileInput = row.querySelector('.inc-file');
+                    return fileInput && fileInput.files.length > 0;
+                });
+                if (!hasFiles) {
+                    showToast('✅ ' + added + ' income entries added!', 'success');
+                    clearIncomeRows();
+                    renderIncomeList();
+                    renderTransactions();
+                    refreshDashboard();
+                    updatePreviewCounts();
+                }
+            } else {
+                if (!document.querySelector('#incomeTableBody tr')) {
+                    showToast('No entries to submit. Add some rows first.', 'error');
+                } else {
+                    showToast('Please fill in all fields (Reference, Particulars, Amount).', 'error');
+                }
+            }
+        }
+
+        function readFileAsBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => reject(reader.error);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function clearIncomeRows() {
+            document.getElementById('incomeTableBody').innerHTML = '';
+            incomeRowCount = 0;
+            // add one empty row
+            addIncomeRow();
+        }
+
+        // ─── Render Income List ───
+        function renderIncomeList() {
+            const list = transactions.filter(t => t.type === 'income' && t.head !== 'Opening')
+                .sort((a, b) => b.id - a.id)
+                .slice(0, 20);
+            const container = document.getElementById('incomeList');
+            if (list.length === 0) {
+                container.innerHTML = '<div class="empty-state"><span class="emoji">📭</span>No income entries yet.</div>';
+                return;
+            }
+            container.innerHTML = list.map(t => `
+            <div class="tx-item">
+              <span class="tx-type income">Income</span>
+              <span class="tx-date">${t.date}</span>
+              <span class="tx-particulars">${t.reference} — ${t.particulars}</span>
+              <span class="tx-amount income">+₹${t.amount.toFixed(2)}</span>
+              <span class="tx-head">${t.head}</span>
+              ${t.attachments && t.attachments.length > 0 ? `<span class="tx-attach">📎${t.attachments.length}</span>` : ''}
+              <div class="tx-actions">
+                <button class="btn btn-danger btn-xs" onclick="deleteTransaction(${t.id});renderIncomeList();renderTransactions();refreshDashboard();updatePreviewCounts();">Delete</button>
+              </div>
+            </div>
+          `).join('');
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  EXPENSE BULK
+        // ════════════════════════════════════════════════════════════════
+        let expenseRowCount = 0;
+
+        function addExpenseRow(data = {}) {
+            const tbody = document.getElementById('expenseTableBody');
+            const row = document.createElement('tr');
+            const idx = expenseRowCount++;
+            row.dataset.idx = idx;
+            row.innerHTML = `
+            <td><input type="text" class="exp-ref" value="${data.reference || ''}" placeholder="Voucher No." /></td>
+            <td><input type="text" class="exp-particulars" value="${data.particulars || ''}" placeholder="Description" /></td>
+            <td><input type="number" class="exp-amount" value="${data.amount || ''}" step="0.01" placeholder="0.00" /></td>
+            <td><input type="number" class="exp-cheques" value="${data.chequeCount || 0}" step="1" min="0" placeholder="0" /></td>
+            <td><input type="text" class="exp-head" value="${data.head || ''}" placeholder="Head" /></td>
+            <td><input type="file" class="exp-file" accept="image/*,application/pdf" multiple /></td>
+            <td><button class="btn btn-danger btn-xs" onclick="removeExpenseRow(this)">✕</button></td>
+          `;
+            tbody.appendChild(row);
+        }
+
+        function removeExpenseRow(btn) {
+            const row = btn.closest('tr');
+            row.remove();
+        }
+
+        function submitExpenseBulk() {
+            const date = document.getElementById('expenseDate').value;
+            if (!date) { showToast('Please select a date.', 'error'); return; }
+
+            const rows = document.querySelectorAll('#expenseTableBody tr');
+            let added = 0;
+            const promises = [];
+
+            rows.forEach(row => {
+                const ref = row.querySelector('.exp-ref').value.trim();
+                const particulars = row.querySelector('.exp-particulars').value.trim();
+                const amount = parseFloat(row.querySelector('.exp-amount').value);
+                const chequeCount = parseInt(row.querySelector('.exp-cheques').value) || 0;
+                const head = row.querySelector('.exp-head').value.trim() || 'General';
+                const fileInput = row.querySelector('.exp-file');
+
+                if (!ref || !particulars || isNaN(amount) || amount === 0) {
+                    return;
+                }
+
+                const filePromises = [];
+                if (fileInput && fileInput.files.length > 0) {
+                    for (let f of fileInput.files) {
+                        filePromises.push(readFileAsBase64(f));
+                    }
+                }
+
+                const txData = {
+                    type: 'expense',
+                    date: date,
+                    reference: ref,
+                    particulars: particulars,
+                    amount: amount,
+                    head: head,
+                    bankAmount: amount,
+                    chequeCount: chequeCount,
+                    attachments: []
+                };
+
+                if (filePromises.length > 0) {
+                    const p = Promise.all(filePromises).then(results => {
+                        const attachData = results.map((data, i) => ({
+                            name: fileInput.files[i].name,
+                            type: fileInput.files[i].type,
+                            data: data,
+                            size: fileInput.files[i].size
+                        }));
+                        txData.attachments = attachData;
+                        addTransaction(txData);
+                        added++;
+                    });
+                    promises.push(p);
+                } else {
+                    addTransaction(txData);
+                    added++;
+                }
+            });
+
+            if (promises.length > 0) {
+                Promise.all(promises).then(() => {
+                    showToast('✅ ' + added + ' expense entries added!', 'success');
+                    clearExpenseRows();
+                    renderExpenseList();
+                    renderTransactions();
+                    refreshDashboard();
+                    updatePreviewCounts();
+                }).catch(err => {
+                    showToast('Error: ' + err.message, 'error');
+                });
+            } else {
+                if (added > 0) {
+                    showToast('✅ ' + added + ' expense entries added!', 'success');
+                    clearExpenseRows();
+                    renderExpenseList();
+                    renderTransactions();
+                    refreshDashboard();
+                    updatePreviewCounts();
+                } else {
+                    if (!document.querySelector('#expenseTableBody tr')) {
+                        showToast('No entries to submit. Add some rows first.', 'error');
+                    } else {
+                        showToast('Please fill in all fields (Voucher, Particulars, Amount).', 'error');
+                    }
+                }
+            }
+        }
+
+        function clearExpenseRows() {
+            document.getElementById('expenseTableBody').innerHTML = '';
+            expenseRowCount = 0;
+            addExpenseRow();
+        }
+
+        // ─── Render Expense List ───
+        function renderExpenseList() {
+            const list = transactions.filter(t => t.type === 'expense')
+                .sort((a, b) => b.id - a.id)
+                .slice(0, 20);
+            const container = document.getElementById('expenseList');
+            if (list.length === 0) {
+                container.innerHTML = '<div class="empty-state"><span class="emoji">📭</span>No expense entries yet.</div>';
+                return;
+            }
+            container.innerHTML = list.map(t => `
+            <div class="tx-item">
+              <span class="tx-type expense">Expense</span>
+              <span class="tx-date">${t.date}</span>
+              <span class="tx-particulars">${t.reference} — ${t.particulars}</span>
+              <span class="tx-amount expense">-₹${t.amount.toFixed(2)}</span>
+              <span class="tx-head">${t.head}</span>
+              ${t.attachments && t.attachments.length > 0 ? `<span class="tx-attach">📎${t.attachments.length}</span>` : ''}
+              <div class="tx-actions">
+                <button class="btn btn-danger btn-xs" onclick="deleteTransaction(${t.id});renderExpenseList();renderTransactions();refreshDashboard();updatePreviewCounts();">Delete</button>
+              </div>
+            </div>
+          `).join('');
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  TRANSACTIONS (full list)
+        // ════════════════════════════════════════════════════════════════
+        function renderTransactions() {
+            const type = document.getElementById('txFilterType').value;
+            const dateFrom = document.getElementById('txFilterDateFrom').value;
+            const dateTo = document.getElementById('txFilterDateTo').value;
+            const search = document.getElementById('txFilterSearch').value;
+
+            const filtered = getTransactions({ type, dateFrom, dateTo, search });
+            const container = document.getElementById('transactionList');
+            document.getElementById('txCountDisplay').textContent = 'Showing ' + filtered.length + ' transactions';
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="empty-state"><span class="emoji">📭</span>No transactions found.</div>';
+                return;
+            }
+
+            container.innerHTML = filtered.map(t => {
+                const isIncome = t.type === 'income';
+                const sign = isIncome ? '+' : '-';
+                const cls = isIncome ? 'income' : 'expense';
+                const attachInfo = t.attachments && t.attachments.length > 0 ?
+                    `<span class="tx-attach" onclick="viewAttachments(${t.id})">📎${t.attachments.length}</span>` :
+                    '';
+                return `
+              <div class="tx-item">
+                <span class="tx-type ${cls}">${isIncome ? 'Income' : 'Expense'}</span>
+                <span class="tx-date">${t.date}</span>
+                <span class="tx-particulars">${t.reference} — ${t.particulars}</span>
+                <span class="tx-amount ${cls}">${sign}₹${t.amount.toFixed(2)}</span>
+                <span class="tx-head">${t.head}</span>
+                ${attachInfo}
+                <div class="tx-actions">
+                  <button class="btn btn-danger btn-xs" onclick="deleteTransaction(${t.id});renderTransactions();refreshDashboard();updatePreviewCounts();renderIncomeList();renderExpenseList();">Delete</button>
+                </div>
+              </div>
+            `;
+            }).join('');
+        }
+
+        function resetTxFilters() {
+            document.getElementById('txFilterDateFrom').value = '';
+            document.getElementById('txFilterDateTo').value = '';
+            document.getElementById('txFilterType').value = 'all';
+            document.getElementById('txFilterSearch').value = '';
+            renderTransactions();
+        }
+
+        // ─── View attachments ───
+        function viewAttachments(id) {
+            const tx = transactions.find(t => t.id === id);
+            if (!tx || !tx.attachments || tx.attachments.length === 0) {
+                showToast('No attachments for this transaction.', 'info');
+                return;
+            }
+            let html = '📎 Attachments for #' + id + ':\n';
+            tx.attachments.forEach((a, i) => {
+                html += '\n' + (i + 1) + '. ' + a.name + ' (' + (a.size ? (a.size / 1024).toFixed(1) + 'KB' : 'unknown') +
+                    ')';
+                if (a.data && a.data.startsWith('data:')) {
+                    // open in new tab
+                    html += ' [click to view]';
+                }
+            });
+            // For simplicity, show in a modal-like alert
+            alert(html);
+            // Also, open first image in new tab if it's an image
+            const firstImg = tx.attachments.find(a => a.data && a.data.startsWith('data:image'));
+            if (firstImg) {
+                window.open(firstImg.data, '_blank');
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  SUPABASE
+        // ════════════════════════════════════════════════════════════════
+        function loadSupabaseConfig() {
+            const raw = localStorage.getItem(CONFIG_KEY);
+            if (raw) {
+                try {
+                    supaConfig = JSON.parse(raw);
+                    document.getElementById('supaUrl').value = supaConfig.url || '';
+                    document.getElementById('supaKey').value = supaConfig.key || '';
+                    document.getElementById('supaTable').value = supaConfig.table || 'transactions';
+                    document.getElementById('supaBucket').value = supaConfig.bucket || 'receipts';
+                    initSupabase();
+                    updateSupabaseStatus();
+                    return supaConfig;
+                } catch (e) { supaConfig = null; }
+            }
+            return null;
+        }
+
+        function saveSupabaseConfig() {
+            const url = document.getElementById('supaUrl').value.trim();
+            const key = document.getElementById('supaKey').value.trim();
+            const table = document.getElementById('supaTable').value.trim() || 'transactions';
+            const bucket = document.getElementById('supaBucket').value.trim() || 'receipts';
+            if (!url || !key) {
+                showToast('Please enter both URL and Anon Key.', 'error');
+                return;
+            }
+            supaConfig = { url, key, table, bucket };
+            localStorage.setItem(CONFIG_KEY, JSON.stringify(supaConfig));
+            initSupabase();
+            updateSupabaseStatus();
+            showToast('✅ Supabase config saved!', 'success');
+        }
+
+        function clearSupabaseConfig() {
+            localStorage.removeItem(CONFIG_KEY);
+            supaConfig = null;
+            supabaseClient = null;
+            document.getElementById('supaUrl').value = '';
+            document.getElementById('supaKey').value = '';
+            updateSupabaseStatus();
+            showToast('Config cleared.', 'info');
+        }
+
+        function initSupabase() {
+            if (supaConfig && supaConfig.url && supaConfig.key) {
+                try {
+                    supabaseClient = supabase.createClient(supaConfig.url, supaConfig.key);
+                } catch (e) {
+                    supabaseClient = null;
+                }
+            } else {
+                supabaseClient = null;
+            }
+            updateSupabaseStatus();
+        }
+
+        function updateSupabaseStatus() {
+            const el = document.getElementById('supaStatusDetail');
+            const badge = document.getElementById('supaStatus');
+            if (supabaseClient && supaConfig) {
+                el.textContent = '✅ Connected to ' + supaConfig.url;
+                el.className = 'status connected';
+                badge.textContent = '☁️ Connected';
+                badge.style.background = '#d4edda';
+                badge.style.color = '#0f7b3a';
+            } else {
+                el.textContent = '⛔ Not connected. Configure Supabase in Settings.';
+                el.className = 'status disconnected';
+                badge.textContent = '☁️ Disconnected';
+                badge.style.background = '#eef2f8';
+                badge.style.color = '#3d5068';
+            }
+        }
+
+        async function testSupabaseConnection() {
+            if (!supabaseClient) {
+                showToast('Please configure and save Supabase settings first.', 'error');
+                return;
+            }
+            try {
+                const { data, error } = await supabaseClient.from(supaConfig.table).select('count').limit(1);
+                if (error) throw error;
+                showToast('✅ Connection successful! Table "' + supaConfig.table + '" is accessible.', 'success');
+                updateSupabaseStatus();
+            } catch (e) {
+                showToast('❌ Connection failed: ' + e.message, 'error');
+            }
+        }
+
+        async function pushToSupabase() {
+            if (!supabaseClient || !supaConfig) {
+                showToast('Please configure Supabase in Settings first.', 'error');
+                return;
+            }
+            if (transactions.length === 0) {
+                showToast('No transactions to push.', 'info');
+                return;
+            }
+
+            // Confirm
+            if (!confirm('Push all ' + transactions.length + ' transactions to Supabase? This will overwrite remote data.'))
+                return;
+
+            try {
+                showToast('⏳ Pushing to Supabase...', 'info', 10000);
+
+                // For each transaction, if it has attachments, upload them to storage
+                const txWithFiles = transactions.filter(t => t.attachments && t.attachments.length > 0);
+                let uploadedCount = 0;
+
+                for (let tx of transactions) {
+                    const txData = { ...tx };
+                    // Remove attachments from the data payload (we'll handle separately)
+                    const attachments = txData.attachments || [];
+                    delete txData.attachments;
+
+                    // Insert transaction
+                    const { error: insertError } = await supabaseClient
+                        .from(supaConfig.table)
+                        .upsert({ ...txData, id: tx.id });
+
+                    if (insertError) throw insertError;
+
+                    // Upload attachments
+                    if (attachments.length > 0) {
+                        for (let attach of attachments) {
+                            if (attach.data && attach.data.startsWith('data:')) {
+                                // Convert data URL to blob
+                                const blob = await dataURLtoBlob(attach.data);
+                                const path = tx.id + '/' + Date.now() + '_' + attach.name;
+                                const { error: uploadError } = await supabaseClient.storage
+                                    .from(supaConfig.bucket)
+                                    .upload(path, blob, { contentType: attach.type, upsert: true });
+                                if (uploadError) {
+                                    console.warn('Upload error for ' + attach.name + ':', uploadError);
+                                } else {
+                                    uploadedCount++;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                localStorage.setItem('school_accountant_last_sync', Date.now().toString());
+                showToast('✅ Pushed ' + transactions.length + ' transactions to Supabase! (' + uploadedCount +
+                    ' files uploaded)', 'success');
+                refreshDashboard();
+
+            } catch (e) {
+                showToast('❌ Error pushing to Supabase: ' + e.message, 'error');
+                console.error(e);
+            }
+        }
+
+        function dataURLtoBlob(dataURL) {
+            return fetch(dataURL).then(res => res.blob());
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  CSV EXPORT / IMPORT
+        // ════════════════════════════════════════════════════════════════
+        function exportCSV() {
+            if (transactions.length === 0) {
+                showToast('No data to export.', 'error');
+                return;
+            }
+            const headers = ['id', 'type', 'date', 'reference', 'particulars', 'amount', 'head', 'bankAmount',
+                'chequeCount'
+            ];
+            const rows = transactions.map(t => [
+                t.id, t.type, t.date, t.reference, t.particulars, t.amount, t.head, t.bankAmount || 0, t.chequeCount || 0
+            ]);
+            const csv = Papa.unparse({ fields: headers, data: rows });
+            downloadFile(csv, 'transactions_export.csv', 'text/csv');
+            showToast('✅ CSV exported!', 'success');
+        }
+
+        function importCSV(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    if (results.errors.length > 0) {
+                        showToast('⚠️ CSV parse errors: ' + results.errors.length, 'error');
+                        console.warn(results.errors);
+                    }
+                    const data = results.data.filter(row => row.id && row.type);
+                    let imported = 0;
+                    data.forEach(row => {
+                        const tx = {
+                            type: row.type.trim().toLowerCase(),
+                            date: row.date.trim(),
+                            reference: row.reference.trim(),
+                            particulars: row.particulars.trim(),
+                            amount: parseFloat(row.amount) || 0,
+                            head: (row.head || 'General').trim(),
+                            bankAmount: parseFloat(row.bankAmount) || 0,
+                            chequeCount: parseInt(row.chequeCount) || 0,
+                            attachments: []
+                        };
+                        if (tx.type !== 'income' && tx.type !== 'expense') return;
+                        if (!tx.date || !tx.reference || !tx.particulars || tx.amount === 0) return;
+                        // check for duplicate by id
+                        const existing = transactions.find(t => t.id === parseInt(row.id));
+                        if (existing) {
+                            // update
+                            Object.assign(existing, tx);
+                        } else {
+                            tx.id = parseInt(row.id) || getNextId();
+                            transactions.push(tx);
+                        }
+                        imported++;
+                    });
+                    saveData();
+                    showToast('✅ Imported ' + imported + ' transactions from CSV.', 'success');
+                    renderAll();
+                },
+                error: function(err) {
+                    showToast('❌ CSV import failed: ' + err.message, 'error');
+                }
+            });
+            event.target.value = '';
+        }
+
+        function downloadFile(content, filename, mimeType) {
+            const blob = new Blob([content], { type: mimeType + ';charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  JSON EXPORT / IMPORT (Full data)
+        // ════════════════════════════════════════════════════════════════
+        function exportAllData() {
+            const data = { transactions, nextId, exportedAt: new Date().toISOString() };
+            const json = JSON.stringify(data, null, 2);
+            downloadFile(json, 'school_accountant_backup.json', 'application/json');
+            showToast('✅ Full data exported!', 'success');
+        }
+
+        function importAllData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data.transactions && Array.isArray(data.transactions)) {
+                        transactions = data.transactions;
+                        nextId = data.nextId || 1;
+                        saveData();
+                        showToast('✅ Imported ' + transactions.length + ' transactions from backup.', 'success');
+                        renderAll();
+                    } else {
+                        showToast('❌ Invalid backup file format.', 'error');
+                    }
+                } catch (err) {
+                    showToast('❌ Failed to parse JSON: ' + err.message, 'error');
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+
+        function clearAllLocalData() {
+            if (!confirm('⚠️ Delete ALL local transactions? This cannot be undone!')) return;
+            if (!confirm('Are you sure? All data will be permanently removed from your browser.')) return;
+            transactions = [];
+            nextId = 1;
+            saveData();
+            renderAll();
+            showToast('🗑️ All local data cleared.', 'info');
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  RENDER ALL
+        // ════════════════════════════════════════════════════════════════
+        function renderAll() {
+            refreshDashboard();
+            renderIncomeList();
+            renderExpenseList();
+            renderTransactions();
+            updatePreviewCounts();
+            updateLocalStatus();
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  TAB SWITCHING
+        // ════════════════════════════════════════════════════════════════
+        function initTabs() {
+            const tabs = document.querySelectorAll('#tabNav button');
+            tabs.forEach(btn => {
+                btn.addEventListener('click', function() {
+                    tabs.forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+                    const target = document.getElementById('tab-' + this.dataset.tab);
+                    if (target) target.classList.add('active');
+                    // refresh lists when switching
+                    if (this.dataset.tab === 'income') renderIncomeList();
+                    if (this.dataset.tab === 'expense') renderExpenseList();
+                    if (this.dataset.tab === 'transactions') renderTransactions();
+                    if (this.dataset.tab === 'dashboard') refreshDashboard();
+                });
+            });
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  INIT
+        // ════════════════════════════════════════════════════════════════
+        function init() {
+            // Set default dates
+            const today = new Date().toISOString().slice(0, 10);
+            document.getElementById('incomeDate').value = today;
+            document.getElementById('expenseDate').value = today;
+
+            // Load data
+            loadData();
+
+            // Load Supabase config
+            loadSupabaseConfig();
+
+            // Init tabs
+            initTabs();
+
+            // Add initial rows
+            clearIncomeRows();
+            clearExpenseRows();
+
+            // Render all
+            renderAll();
+
+            // Auto-sync status
+            updateSupabaseStatus();
+
+            console.log('📘 School Accountant initialized. Transactions:', transactions.length);
+        }
+
+        // ─── Auto-run ───
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+
+</body>
+</html>
