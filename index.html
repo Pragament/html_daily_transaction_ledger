@@ -648,6 +648,7 @@
             letter-spacing: -0.5px;
             background: linear-gradient(135deg, #0b2a4a 0%, #1d4b6e 100%);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
         }
         .login-subtitle {
@@ -830,6 +831,7 @@
     </style>
 </head>
 <body>
+    <div id="autocompleteDropdown" style="display:none; position:absolute; background: white; border: 1px solid #d7dfe9; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); z-index: 10000; max-height: 220px; overflow-y: auto; min-width: 250px;"></div>
 
     <div id="app">
         <!-- ─── LOGIN VIEW ─── -->
@@ -852,6 +854,9 @@
                         <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
                     </svg>
                     <span>Continue with Google</span>
+                </button>
+                <button class="btn btn-outline" style="margin-top: 14px; width: 100%; border-radius: 12px; padding: 12px; justify-content: center; font-size: 14px;" onclick="bypassLoginForLocalMode()">
+                    <span>Use Offline (Local Mode)</span>
                 </button>
             </div>
 
@@ -1005,18 +1010,69 @@
         <!-- ─── TRANSACTIONS ─── -->
         <section class="tab-content" id="tab-transactions">
             <div class="section-title">📋 All Transactions</div>
-            <div class="flex-row gap-8 mb-12">
-                <input type="date" id="txFilterDateFrom" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;" />
-                <span class="text-muted">to</span>
-                <input type="date" id="txFilterDateTo" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;" />
-                <select id="txFilterType" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;">
-                    <option value="all">All Types</option>
-                    <option value="income">Income</option>
-                    <option value="expense">Expense</option>
-                </select>
-                <input type="text" id="txFilterSearch" placeholder="Search particulars…" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;min-width:140px;" />
-                <button class="btn btn-primary btn-sm" onclick="renderTransactions()">🔍 Filter</button>
-                <button class="btn btn-outline btn-sm" onclick="resetTxFilters()">Reset</button>
+            <div class="flex-row gap-8 mb-12" style="background: #f9fbfe; padding: 14px 18px; border-radius: 16px; border: 1px solid #e6ecf3;">
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                    <label style="font-size:11px; font-weight:600; color:#5e6f8a; text-transform:uppercase;">📅 Date range</label>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <input type="date" id="txFilterDateFrom" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;font-size:13px;" />
+                        <span class="text-muted" style="font-size:12px;">to</span>
+                        <input type="date" id="txFilterDateTo" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;font-size:13px;" />
+                    </div>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                    <label style="font-size:11px; font-weight:600; color:#5e6f8a; text-transform:uppercase;">💰 Amount range</label>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <input type="number" id="txFilterAmountMin" placeholder="Min" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;width:80px;font-size:13px;" />
+                        <span class="text-muted" style="font-size:12px;">to</span>
+                        <input type="number" id="txFilterAmountMax" placeholder="Max" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;width:80px;font-size:13px;" />
+                    </div>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                    <label style="font-size:11px; font-weight:600; color:#5e6f8a; text-transform:uppercase;">🏷️ Category</label>
+                    <div style="display:flex; gap:6px;">
+                        <select id="txFilterMainCategory" onchange="populateSubCategoryDropdown(document.getElementById('txFilterSubCategory'), this.value)" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;font-size:13px;"></select>
+                        <select id="txFilterSubCategory" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;font-size:13px;" disabled><option value="">All Subs</option></select>
+                    </div>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                    <label style="font-size:11px; font-weight:600; color:#5e6f8a; text-transform:uppercase;">🔍 Search</label>
+                    <input type="text" id="txFilterSearch" placeholder="Particulars, @student, #tag" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;min-width:180px;font-size:13px;" />
+                </div>
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                    <label style="font-size:11px; font-weight:600; color:#5e6f8a; text-transform:uppercase;">Sort</label>
+                    <div style="display:flex; gap:6px;">
+                        <select id="txSortBy" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;font-size:13px;">
+                            <option value="id">Created Time</option>
+                            <option value="date">Date</option>
+                            <option value="student">Student</option>
+                            <option value="amount">Amount</option>
+                            <option value="category">Category</option>
+                            <option value="subcategory">Subcategory</option>
+                            <option value="tags">Tags</option>
+                            <option value="updatedAt">Updated Time</option>
+                        </select>
+                        <select id="txSortOrder" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;font-size:13px;">
+                            <option value="desc">Desc</option>
+                            <option value="asc">Asc</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                    <label style="font-size:11px; font-weight:600; color:#5e6f8a; text-transform:uppercase;">Type</label>
+                    <select id="txFilterType" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;font-size:13px;">
+                        <option value="all">All Types</option>
+                        <option value="income">Income</option>
+                        <option value="expense">Expense</option>
+                    </select>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px; margin-top:20px;">
+                    <input type="checkbox" id="txFilterShowDeleted" style="cursor:pointer;" />
+                    <label for="txFilterShowDeleted" style="font-size:12px; font-weight:600; color:#5e6f8a; cursor:pointer;">Show Archived</label>
+                </div>
+                <div style="display:flex; gap:6px; margin-top:20px;">
+                    <button class="btn btn-primary btn-sm" onclick="renderTransactions()">🔍 Apply</button>
+                    <button class="btn btn-outline btn-sm" onclick="resetTxFilters()">Reset</button>
+                </div>
             </div>
             <div id="transactionList" class="tx-list"></div>
             <div class="text-muted text-sm mt-12" id="txCountDisplay"></div>
@@ -1044,6 +1100,13 @@
                     <label>Bucket Name (for receipts)</label>
                     <input type="text" id="supaBucket" value="receipts" />
                 </div>
+                <div class="field" style="margin-bottom:14px;">
+                    <label>DNS Domain for Auto-Config</label>
+                    <div style="display:flex; gap:8px; width:100%;">
+                        <input type="text" id="supaDnsDomain" placeholder="e.g. school.org" style="flex:1;" />
+                        <button class="btn btn-outline" style="white-space:nowrap;" onclick="loadSupabaseConfigFromNameserver(document.getElementById('supaDnsDomain').value)">🔌 Fetch Config</button>
+                    </div>
+                </div>
                 <div class="flex-row gap-8">
                     <button class="btn btn-primary" onclick="saveSupabaseConfig()">💾 Save Config</button>
                     <button class="btn btn-success" onclick="testSupabaseConnection()">🔌 Test Connection</button>
@@ -1065,6 +1128,40 @@
             </div>
 
             <div class="settings-group">
+                <h3>🏷️ Category &amp; Tag Management</h3>
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:20px; margin-top: 10px;">
+                    <div style="background:#fff; border:1px solid #d7dfe9; padding:16px; border-radius:12px;">
+                        <h4 style="font-size:14px; margin-bottom:10px; color:#0b2a4a; display:flex; justify-content:space-between; align-items:center;">
+                            <span>📁 Hierarchy Categories</span>
+                            <button class="btn btn-primary btn-xs" onclick="showAddCategoryPrompt()">+ Add Main</button>
+                        </h4>
+                        <div id="settingsCategoriesList" style="max-height:300px; overflow-y:auto; font-size:13px; display:flex; flex-direction:column; gap:8px;">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                    <div style="background:#fff; border:1px solid #d7dfe9; padding:16px; border-radius:12px;">
+                        <h4 style="font-size:14px; margin-bottom:10px; color:#0b2a4a; display:flex; justify-content:space-between; align-items:center;">
+                            <span>🏷️ System Tags</span>
+                            <button class="btn btn-primary btn-xs" onclick="showAddTagPrompt()">+ Add Tag</button>
+                        </h4>
+                        <div id="settingsTagsList" style="max-height:300px; overflow-y:auto; display:flex; gap:6px; flex-wrap:wrap; padding-top:4px;">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>👥 Student Directory Management</h3>
+                <div class="flex-row gap-8">
+                    <button class="btn btn-primary" onclick="document.getElementById('studentCsvImportInput').click()">📤 Import Student CSV</button>
+                    <input type="file" id="studentCsvImportInput" accept=".csv" style="display:none" onchange="importStudentCSV(event)" />
+                    <button class="btn btn-danger" onclick="clearAllStudentData()">⚠️ Clear All Student Data</button>
+                </div>
+                <div id="settingsStudentCount" class="text-muted text-sm mt-12">Total Students Loaded: 0</div>
+            </div>
+
+            <div class="settings-group">
                 <h3>📤 CSV Import / Export</h3>
                 <div class="flex-row gap-8">
                     <button class="btn btn-primary" onclick="exportCSV()">📥 Export CSV</button>
@@ -1081,6 +1178,73 @@
         </section>
         </div>
 
+        <!-- Edit Transaction Modal -->
+        <div id="editTxModal" class="modal-overlay" onclick="if(event.target.id==='editTxModal') hideEditTxModal()">
+            <div class="modal-content" style="max-width: 600px;">
+                <button class="modal-close" onclick="hideEditTxModal()">✕</button>
+                <div class="modal-header">
+                    <h3>✏️ Edit Transaction</h3>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:12px;">
+                    <input type="hidden" id="editTxId" />
+                    <div class="field" style="display:flex; flex-direction:column; gap:4px;">
+                        <label style="font-size:12px; font-weight:600; color:#5e6f8a;">📅 Date</label>
+                        <input type="date" id="editTxDate" style="padding:8px 12px; border:1px solid #d7dfe9; border-radius:10px;" />
+                    </div>
+                    <div class="field" style="display:flex; flex-direction:column; gap:4px;">
+                        <label style="font-size:12px; font-weight:600; color:#5e6f8a;">Reference No.</label>
+                        <input type="text" id="editTxRef" style="padding:8px 12px; border:1px solid #d7dfe9; border-radius:10px;" />
+                    </div>
+                    <div class="field" style="display:flex; flex-direction:column; gap:4px; position:relative;">
+                        <label style="font-size:12px; font-weight:600; color:#5e6f8a;">Particulars (use @ for student, # for tags)</label>
+                        <input type="text" id="editTxParticulars" style="padding:8px 12px; border:1px solid #d7dfe9; border-radius:10px;" />
+                        <div id="editTxBadges" style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;"></div>
+                    </div>
+                    <div class="field" style="display:flex; flex-direction:column; gap:4px;">
+                        <label style="font-size:12px; font-weight:600; color:#5e6f8a;">Amount (₹)</label>
+                        <input type="number" id="editTxAmount" step="0.01" style="padding:8px 12px; border:1px solid #d7dfe9; border-radius:10px;" />
+                    </div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                        <div class="field" style="display:flex; flex-direction:column; gap:4px;">
+                            <label style="font-size:12px; font-weight:600; color:#5e6f8a;">Category</label>
+                            <select id="editTxMainCategory" style="padding:8px 12px; border:1px solid #d7dfe9; border-radius:10px;"></select>
+                        </div>
+                        <div class="field" style="display:flex; flex-direction:column; gap:4px;">
+                            <label style="font-size:12px; font-weight:600; color:#5e6f8a;">Subcategory</label>
+                            <select id="editTxSubCategory" style="padding:8px 12px; border:1px solid #d7dfe9; border-radius:10px;"></select>
+                        </div>
+                    </div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                        <div class="field" style="display:flex; flex-direction:column; gap:4px;">
+                            <label style="font-size:12px; font-weight:600; color:#5e6f8a;">Bank/Treasury Amount (₹)</label>
+                            <input type="number" id="editTxBankAmount" step="0.01" style="padding:8px 12px; border:1px solid #d7dfe9; border-radius:10px;" />
+                        </div>
+                        <div class="field" style="display:flex; flex-direction:column; gap:4px;">
+                            <label style="font-size:12px; font-weight:600; color:#5e6f8a;">Cheque Count</label>
+                            <input type="number" id="editTxCheques" style="padding:8px 12px; border:1px solid #d7dfe9; border-radius:10px;" />
+                        </div>
+                    </div>
+                    <div style="margin-top:14px; display:flex; gap:10px; justify-content:flex-end;">
+                        <button class="btn btn-outline" onclick="hideEditTxModal()">Cancel</button>
+                        <button class="btn btn-success" onclick="saveEditedTx()">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- History Modal -->
+        <div id="historyTxModal" class="modal-overlay" onclick="if(event.target.id==='historyTxModal') hideHistoryTxModal()">
+            <div class="modal-content" style="max-width: 650px;">
+                <button class="modal-close" onclick="hideHistoryTxModal()">✕</button>
+                <div class="modal-header">
+                    <h3>📋 Revision History &amp; Audit Log</h3>
+                </div>
+                <div id="historyTxTimeline" style="display:flex; flex-direction:column; gap:14px; margin-top:10px;">
+                    <!-- Timelines populated by JS -->
+                </div>
+            </div>
+        </div>
+
         <!-- ─── TOAST ─── -->
         <div id="toast" class="toast"></div>
     </div>
@@ -1093,6 +1257,34 @@
         let nextId = 1;
         const STORAGE_KEY = 'school_accountant_data';
         const CONFIG_KEY = 'school_accountant_config';
+        const CATEGORIES_KEY = 'school_accountant_categories';
+        const TAGS_KEY = 'school_accountant_tags';
+        const STUDENTS_KEY = 'school_accountant_students';
+        const REVISIONS_KEY = 'school_accountant_revisions';
+
+        let categories = [];
+        let tags = [];
+        let students = [];
+        let revisions = [];
+        let currentUser = null;
+
+        const DEFAULT_CATEGORIES = [
+            { id: 1, name: 'Fees', parent_id: null, type: 'all' },
+            { id: 2, name: 'Registration', parent_id: 1, type: 'all' },
+            { id: 3, name: 'Tuition', parent_id: 1, type: 'all' },
+            { id: 4, name: 'Hostel', parent_id: 1, type: 'all' },
+            { id: 5, name: 'Transport', parent_id: 1, type: 'all' },
+            { id: 6, name: 'Exam', parent_id: 1, type: 'all' },
+            { id: 7, name: 'Operations', parent_id: null, type: 'all' },
+            { id: 8, name: 'Bank Deposit', parent_id: 7, type: 'all' },
+            { id: 9, name: 'Refreshment', parent_id: 7, type: 'all' },
+            { id: 10, name: 'Stationary', parent_id: 7, type: 'all' },
+            { id: 11, name: 'Equipment', parent_id: null, type: 'all' },
+            { id: 12, name: 'Event', parent_id: null, type: 'all' },
+            { id: 13, name: 'Medical', parent_id: null, type: 'all' }
+        ];
+
+        const DEFAULT_TAGS = ['semester1', 'semester2', 'cash', 'cheque', 'online', 'draft', 'urgent', 'pending', 'reimbursement'];
 
         // ─── Supabase client ───
         let supabaseClient = null;
@@ -1164,6 +1356,146 @@
             }
         }
 
+        window.bypassLoginForLocalMode = function() {
+            currentUser = { email: 'offline@school.org', user_metadata: { full_name: 'Offline Accountant' } };
+            const loginView = document.getElementById('loginView');
+            const dashboardView = document.getElementById('dashboardView');
+            if (loginView) loginView.style.display = 'none';
+            if (dashboardView) dashboardView.style.display = 'block';
+            
+            const avatarEl = document.getElementById('userAvatar');
+            if (avatarEl) {
+                avatarEl.src = 'https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y';
+            }
+            const nameEl = document.getElementById('userName');
+            if (nameEl) {
+                nameEl.textContent = 'Offline Accountant';
+            }
+            const emailEl = document.getElementById('userEmail');
+            if (emailEl) {
+                emailEl.textContent = 'offline@school.org';
+            }
+            const userProfile = document.getElementById('userProfile');
+            if (userProfile) {
+                userProfile.style.display = 'inline-flex';
+            }
+
+            renderAll();
+            showToast('Running in local offline mode', 'info');
+        };
+
+        async function syncAllFromSupabase() {
+            if (!supabaseClient || !supaConfig) return;
+            try {
+                showToast('⏳ Syncing from Supabase...', 'info', 3000);
+                
+                // 1. Fetch categories
+                const { data: remoteCats, error: catErr } = await supabaseClient
+                    .from('categories')
+                    .select('*');
+                if (!catErr && remoteCats && remoteCats.length > 0) {
+                    categories = remoteCats;
+                    saveCategories();
+                }
+
+                // 2. Fetch tags
+                const { data: remoteTags, error: tagErr } = await supabaseClient
+                    .from('tags')
+                    .select('*');
+                if (!tagErr && remoteTags && remoteTags.length > 0) {
+                    tags = remoteTags.map(t => t.name);
+                    saveTags();
+                }
+
+                // 3. Fetch students
+                const { data: remoteStuds, error: studErr } = await supabaseClient
+                    .from('students')
+                    .select('*');
+                if (!studErr && remoteStuds) {
+                    students = remoteStuds.map(s => ({
+                        admissionNumber: s.admission_number,
+                        name: s.name,
+                        rollNumber: s.roll_number
+                    }));
+                    saveStudents();
+                }
+
+                // 4. Fetch revisions
+                const { data: remoteRevs, error: revErr } = await supabaseClient
+                    .from('transaction_revisions')
+                    .select('*');
+                if (!revErr && remoteRevs) {
+                    revisions = remoteRevs.map(r => ({
+                        id: r.id,
+                        transaction_id: r.transaction_id,
+                        action: r.action,
+                        old_values: r.old_values,
+                        new_values: r.new_values,
+                        created_by: r.created_by,
+                        created_at: r.created_at
+                    }));
+                    saveRevisions();
+                }
+
+                // 5. Fetch transactions
+                const { data: remoteTxs, error: txErr } = await supabaseClient
+                    .from(supaConfig.table)
+                    .select('*');
+                
+                if (txErr) throw txErr;
+
+                if (remoteTxs) {
+                    remoteTxs.forEach(rt => {
+                        const localIdx = transactions.findIndex(lt => lt.id === rt.id);
+                        const mappedTx = {
+                            id: rt.id,
+                            type: rt.type,
+                            date: rt.date,
+                            reference: rt.reference,
+                            particulars: rt.particulars,
+                            amount: rt.amount,
+                            head: rt.head,
+                            bankAmount: rt.bank_amount || 0,
+                            chequeCount: rt.cheque_count || 0,
+                            mainCategory: rt.main_category,
+                            subCategory: rt.sub_category,
+                            tags: rt.tags || [],
+                            createdBy: rt.created_by,
+                            createdAt: rt.created_at,
+                            updatedBy: rt.updated_by,
+                            updatedAt: rt.updated_at,
+                            deletedBy: rt.deleted_by,
+                            isDeleted: rt.is_deleted || false,
+                            attachments: []
+                        };
+                        
+                        if (localIdx === -1) {
+                            transactions.push(mappedTx);
+                        } else {
+                            const localTx = transactions[localIdx];
+                            const localTime = new Date(localTx.updatedAt || 0).getTime();
+                            const remoteTime = new Date(rt.updated_at || 0).getTime();
+                            if (remoteTime > localTime) {
+                                mappedTx.attachments = localTx.attachments || [];
+                                transactions[localIdx] = mappedTx;
+                            }
+                        }
+                    });
+                    
+                    if (transactions.length > 0) {
+                        nextId = Math.max(...transactions.map(t => t.id)) + 1;
+                    }
+                    saveData();
+                }
+                
+                showToast('✅ Synced with Supabase!', 'success');
+                renderAll();
+            } catch(e) {
+                console.error("Failed to sync from Supabase:", e);
+                showToast('Sync failed: ' + e.message, 'error');
+            }
+        }
+
         function handleAuthStateChange(event, session) {
             console.log('Auth state change:', event, session);
             const loginView = document.getElementById('loginView');
@@ -1171,6 +1503,7 @@
             const userProfile = document.getElementById('userProfile');
 
             if (session && session.user) {
+                currentUser = session.user;
                 if (loginView) loginView.style.display = 'none';
                 if (dashboardView) dashboardView.style.display = 'block';
 
@@ -1195,7 +1528,11 @@
                 if (emailEl) {
                     emailEl.textContent = user.email;
                 }
+
+                // Sync data automatically upon login
+                syncAllFromSupabase();
             } else {
+                currentUser = null;
                 if (dashboardView) dashboardView.style.display = 'none';
                 if (loginView) loginView.style.display = 'block';
 
@@ -1249,6 +1586,91 @@
         // ════════════════════════════════════════════════════════════════
         //  DATA LAYER
         // ════════════════════════════════════════════════════════════════
+        function saveCategories() {
+            localStorage.setItem(CATEGORIES_KEY, JSON.stringify(categories));
+        }
+
+        function saveTags() {
+            localStorage.setItem(TAGS_KEY, JSON.stringify(tags));
+        }
+
+        function saveStudents() {
+            localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
+        }
+
+        function saveRevisions() {
+            localStorage.setItem(REVISIONS_KEY, JSON.stringify(revisions));
+        }
+
+        async function trackRevision(action, oldTx, newTx) {
+            const author = currentUser ? currentUser.email : 'Offline User';
+            const timestamp = new Date().toISOString();
+            const rev = {
+                id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15),
+                transaction_id: oldTx ? oldTx.id : newTx.id,
+                action: action,
+                old_values: oldTx ? JSON.parse(JSON.stringify(oldTx)) : null,
+                new_values: newTx ? JSON.parse(JSON.stringify(newTx)) : null,
+                created_by: author,
+                created_at: timestamp
+            };
+            revisions.push(rev);
+            saveRevisions();
+
+            // Push revision to Supabase if client is initialized
+            if (supabaseClient && supaConfig) {
+                try {
+                    await supabaseClient.from('transaction_revisions').insert({
+                        transaction_id: rev.transaction_id,
+                        action: rev.action,
+                        old_values: rev.old_values,
+                        new_values: rev.new_values,
+                        created_by: rev.created_by,
+                        created_at: rev.created_at
+                    });
+                } catch(e) {
+                    console.error("Failed to push revision to Supabase:", e);
+                }
+            }
+        }
+
+        async function pushSingleTransactionToSupabase(tx) {
+            if (!supabaseClient || !supaConfig) return;
+            try {
+                const txData = { ...tx };
+                const attachments = txData.attachments || [];
+                delete txData.attachments;
+                
+                const dbData = {
+                    id: txData.id,
+                    type: txData.type,
+                    date: txData.date,
+                    reference: txData.reference,
+                    particulars: txData.particulars,
+                    amount: txData.amount,
+                    head: txData.head || txData.mainCategory || 'General',
+                    bank_amount: txData.bankAmount,
+                    cheque_count: txData.chequeCount,
+                    main_category: txData.mainCategory,
+                    sub_category: txData.subCategory,
+                    tags: txData.tags || [],
+                    created_by: txData.createdBy,
+                    created_at: txData.createdAt,
+                    updated_by: txData.updatedBy,
+                    updated_at: txData.updatedAt,
+                    deleted_by: txData.deletedBy,
+                    is_deleted: txData.isDeleted
+                };
+
+                const { error } = await supabaseClient
+                    .from(supaConfig.table)
+                    .upsert(dbData);
+                if (error) throw error;
+            } catch(e) {
+                console.error("Failed to push transaction to Supabase:", e);
+            }
+        }
+
         function loadData() {
             const raw = localStorage.getItem(STORAGE_KEY);
             if (raw) {
@@ -1304,12 +1726,79 @@
                 nextId = 17;
                 saveData();
             }
-            // ensure each tx has attachments array
-            transactions.forEach(t => { if (!t.attachments) t.attachments = []; });
-            // ensure bankAmount and chequeCount exist
+
+            // Load categories list
+            const rawCats = localStorage.getItem(CATEGORIES_KEY);
+            if (rawCats) {
+                try { categories = JSON.parse(rawCats); } catch(e) { categories = [...DEFAULT_CATEGORIES]; }
+            } else {
+                categories = [...DEFAULT_CATEGORIES];
+                saveCategories();
+            }
+
+            // Load tags list
+            const rawTags = localStorage.getItem(TAGS_KEY);
+            if (rawTags) {
+                try { tags = JSON.parse(rawTags); } catch(e) { tags = [...DEFAULT_TAGS]; }
+            } else {
+                tags = [...DEFAULT_TAGS];
+                saveTags();
+            }
+
+            // Load students list
+            const rawStuds = localStorage.getItem(STUDENTS_KEY);
+            if (rawStuds) {
+                try { students = JSON.parse(rawStuds); } catch(e) { students = []; }
+            } else {
+                students = [];
+            }
+
+            // Load revisions
+            const rawRevs = localStorage.getItem(REVISIONS_KEY);
+            if (rawRevs) {
+                try { revisions = JSON.parse(rawRevs); } catch(e) { revisions = []; }
+            } else {
+                revisions = [];
+            }
+
+            // Ensure backward compatibility of transactions structure
             transactions.forEach(t => {
+                if (!t.attachments) t.attachments = [];
                 if (t.bankAmount === undefined) t.bankAmount = 0;
                 if (t.chequeCount === undefined) t.chequeCount = 0;
+                if (t.isDeleted === undefined) t.isDeleted = false;
+                
+                // Map head to main category & sub category if missing
+                if (!t.mainCategory) {
+                    if (t.head === 'Registration') {
+                        t.mainCategory = 'Fees';
+                        t.subCategory = 'Registration';
+                    } else if (t.head === 'Tuition') {
+                        t.mainCategory = 'Fees';
+                        t.subCategory = 'Tuition';
+                    } else if (t.head === 'Bank Deposit') {
+                        t.mainCategory = 'Operations';
+                        t.subCategory = 'Bank Deposit';
+                    } else if (t.head === 'Stationary') {
+                        t.mainCategory = 'Operations';
+                        t.subCategory = 'Stationary';
+                    } else if (t.head === 'Refreshment') {
+                        t.mainCategory = 'Operations';
+                        t.subCategory = 'Refreshment';
+                    } else {
+                        t.mainCategory = t.head || 'General';
+                        t.subCategory = '';
+                    }
+                }
+                if (!t.tags) {
+                    t.tags = [];
+                }
+                if (!t.createdBy) {
+                    t.createdBy = 'Offline User';
+                    t.createdAt = new Date().toISOString();
+                    t.updatedBy = 'Offline User';
+                    t.updatedAt = t.createdAt;
+                }
             });
         }
 
@@ -1328,53 +1817,202 @@
         function addTransaction(tx) {
             tx.id = getNextId();
             tx.attachments = tx.attachments || [];
+            tx.isDeleted = false;
+            tx.createdBy = currentUser ? currentUser.email : 'Offline User';
+            tx.createdAt = new Date().toISOString();
+            tx.updatedBy = tx.createdBy;
+            tx.updatedAt = tx.createdAt;
+
             transactions.push(tx);
             saveData();
+            
+            trackRevision('CREATE', null, tx);
+            
+            // Push to Supabase in real-time if connected
+            if (supabaseClient && supaConfig) {
+                pushSingleTransactionToSupabase(tx);
+            }
             return tx;
         }
 
         function deleteTransaction(id) {
-            transactions = transactions.filter(t => t.id !== id);
+            const tx = transactions.find(t => t.id === id);
+            if (!tx) return;
+            const oldTx = JSON.parse(JSON.stringify(tx));
+
+            tx.isDeleted = true;
+            tx.deletedBy = currentUser ? currentUser.email : 'Offline User';
+            tx.updatedBy = tx.deletedBy;
+            tx.updatedAt = new Date().toISOString();
+
             saveData();
+            trackRevision('DELETE', oldTx, tx);
+
+            if (supabaseClient && supaConfig) {
+                pushSingleTransactionToSupabase(tx);
+            }
         }
 
         function updateTransaction(id, updates) {
             const idx = transactions.findIndex(t => t.id === id);
             if (idx === -1) return null;
-            transactions[idx] = { ...transactions[idx], ...updates };
+            const oldTx = JSON.parse(JSON.stringify(transactions[idx]));
+
+            transactions[idx] = { 
+                ...transactions[idx], 
+                ...updates,
+                updatedBy: currentUser ? currentUser.email : 'Offline User',
+                updatedAt: new Date().toISOString()
+            };
+
             saveData();
+            trackRevision('UPDATE', oldTx, transactions[idx]);
+
+            if (supabaseClient && supaConfig) {
+                pushSingleTransactionToSupabase(transactions[idx]);
+            }
             return transactions[idx];
         }
 
         function getTransactions(filters = {}) {
             let list = [...transactions];
+            
+            // Filter by type
             if (filters.type && filters.type !== 'all') {
                 list = list.filter(t => t.type === filters.type);
             }
+            
+            // Filter by date range
             if (filters.dateFrom) {
                 list = list.filter(t => t.date >= filters.dateFrom);
             }
             if (filters.dateTo) {
                 list = list.filter(t => t.date <= filters.dateTo);
             }
-            if (filters.search) {
-                const s = filters.search.toLowerCase();
-                list = list.filter(t => t.particulars.toLowerCase().includes(s) || t.reference.toLowerCase().includes(s));
+            
+            // Filter by category
+            if (filters.mainCategory && filters.mainCategory !== 'all') {
+                list = list.filter(t => t.mainCategory === filters.mainCategory);
             }
-            return list.sort((a, b) => b.id - a.id);
+            if (filters.subCategory && filters.subCategory !== 'all') {
+                list = list.filter(t => t.subCategory === filters.subCategory);
+            }
+            
+            // Filter by amount range
+            if (filters.amountFrom !== undefined && filters.amountFrom !== '') {
+                list = list.filter(t => t.amount >= parseFloat(filters.amountFrom));
+            }
+            if (filters.amountTo !== undefined && filters.amountTo !== '') {
+                list = list.filter(t => t.amount <= parseFloat(filters.amountTo));
+            }
+            
+            // Filter by soft deletes
+            if (!filters.showDeleted) {
+                list = list.filter(t => !t.isDeleted);
+            }
+            
+            // Parse search term (particulars, reference, @student, #tag)
+            if (filters.search) {
+                let searchTags = [];
+                let searchStudents = [];
+                let plainSearch = filters.search;
+                
+                // Extract #tags
+                const tagMatches = plainSearch.match(/#([^\s,#]+)/g);
+                if (tagMatches) {
+                    tagMatches.forEach(m => {
+                        searchTags.push(m.substring(1).toLowerCase());
+                        plainSearch = plainSearch.replace(m, '');
+                    });
+                }
+                
+                // Extract @students
+                const studentMatches = plainSearch.match(/@([^\s,@]+)/g);
+                if (studentMatches) {
+                    studentMatches.forEach(m => {
+                        searchStudents.push(m.substring(1).toLowerCase());
+                        plainSearch = plainSearch.replace(m, '');
+                    });
+                }
+                
+                plainSearch = plainSearch.trim().toLowerCase();
+                
+                // Match tags
+                if (searchTags.length > 0) {
+                    list = list.filter(t => searchTags.every(st => t.tags && t.tags.some(tag => tag.toLowerCase().includes(st))));
+                }
+                
+                // Match students
+                if (searchStudents.length > 0) {
+                    list = list.filter(t => searchStudents.every(ss => t.student && (
+                        t.student.name.toLowerCase().includes(ss) || 
+                        t.student.admissionNumber.toLowerCase().includes(ss) || 
+                        (t.student.rollNumber && t.student.rollNumber.toLowerCase().includes(ss))
+                    )));
+                }
+                
+                // Match plain description or reference
+                if (plainSearch) {
+                    list = list.filter(t => t.particulars.toLowerCase().includes(plainSearch) || t.reference.toLowerCase().includes(plainSearch));
+                }
+            }
+            
+            // Sorting
+            const sortBy = filters.sortBy || 'id';
+            const sortOrder = filters.sortOrder || 'desc';
+            
+            list.sort((a, b) => {
+                let valA, valB;
+                
+                if (sortBy === 'date') {
+                    valA = a.date || '';
+                    valB = b.date || '';
+                } else if (sortBy === 'student') {
+                    valA = a.student ? a.student.name.toLowerCase() : '';
+                    valB = b.student ? b.student.name.toLowerCase() : '';
+                } else if (sortBy === 'amount') {
+                    valA = a.amount || 0;
+                    valB = b.amount || 0;
+                } else if (sortBy === 'category') {
+                    valA = (a.mainCategory || '').toLowerCase();
+                    valB = (b.mainCategory || '').toLowerCase();
+                } else if (sortBy === 'subcategory') {
+                    valA = (a.subCategory || '').toLowerCase();
+                    valB = (b.subCategory || '').toLowerCase();
+                } else if (sortBy === 'createdAt') {
+                    valA = a.createdAt || '';
+                    valB = b.createdAt || '';
+                } else if (sortBy === 'updatedAt') {
+                    valA = a.updatedAt || '';
+                    valB = b.updatedAt || '';
+                } else if (sortBy === 'tags') {
+                    valA = a.tags && a.tags.length > 0 ? [...a.tags].sort().join(', ').toLowerCase() : '';
+                    valB = b.tags && b.tags.length > 0 ? [...b.tags].sort().join(', ').toLowerCase() : '';
+                } else {
+                    valA = a.id || 0;
+                    valB = b.id || 0;
+                }
+                
+                if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+                if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+                return 0;
+            });
+            
+            return list;
         }
 
         // ─── Dashboard calculations ───
         function calcDashboard() {
-            const opening = transactions.filter(t => t.type === 'income' && t.head === 'Opening');
+            const activeTxs = transactions.filter(t => !t.isDeleted);
+            const opening = activeTxs.filter(t => t.type === 'income' && t.head === 'Opening');
             const openingBal = opening.reduce((sum, t) => sum + t.amount, 0);
-            const income = transactions.filter(t => t.type === 'income' && t.head !== 'Opening');
+            const income = activeTxs.filter(t => t.type === 'income' && t.head !== 'Opening');
             const totalIncome = income.reduce((sum, t) => sum + t.amount, 0);
-            const expenses = transactions.filter(t => t.type === 'expense');
+            const expenses = activeTxs.filter(t => t.type === 'expense');
             const totalExpense = expenses.reduce((sum, t) => sum + t.amount, 0);
             const closing = openingBal + totalIncome - totalExpense;
             const net = totalIncome - totalExpense;
-            return { openingBal, totalIncome, totalExpense, closing, net, count: transactions.length };
+            return { openingBal, totalIncome, totalExpense, closing, net, count: activeTxs.length };
         }
 
         function refreshDashboard() {
@@ -1423,19 +2061,40 @@
             const row = document.createElement('tr');
             const idx = incomeRowCount++;
             row.dataset.idx = idx;
+            
+            if (data.tags) {
+                row.dataset.tags = JSON.stringify(data.tags);
+            } else {
+                row.dataset.tags = "[]";
+            }
+            if (data.student) {
+                row.dataset.studentAdmission = data.student.admissionNumber;
+                row.dataset.studentName = data.student.name;
+                row.dataset.studentRoll = data.student.rollNumber || '';
+            }
+
             row.innerHTML = `
             <td><input type="text" class="inc-ref" value="${data.reference || ''}" placeholder="Receipt No." /></td>
-            <td><input type="text" class="inc-particulars" value="${data.particulars || ''}" placeholder="Description" /></td>
+            <td>
+                <input type="text" class="inc-particulars" value="${data.particulars || ''}" placeholder="Description" />
+                <div class="row-badges" style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;"></div>
+            </td>
             <td><input type="number" class="inc-amount" value="${data.amount || ''}" step="0.01" placeholder="0.00" /></td>
-            <td><input type="text" class="inc-head" value="${data.head || ''}" placeholder="Head" /></td>
+            <td>
+                <select class="inc-main-category" style="margin-bottom:4px;"></select>
+                <select class="inc-sub-category" disabled></select>
+            </td>
             <td><input type="file" class="inc-file" accept="image/*,application/pdf" multiple /></td>
             <td><button class="btn btn-danger btn-xs" onclick="removeIncomeRow(this)">✕</button></td>
           `;
             tbody.appendChild(row);
-            // if file data is provided, store it (for edit later)
-            if (data.fileData) {
-                // we handle file data separately
-            }
+            
+            const mainSel = row.querySelector('.inc-main-category');
+            const subSel = row.querySelector('.inc-sub-category');
+            
+            populateMainCategoryDropdown(mainSel, 'income', data.mainCategory || '');
+            populateSubCategoryDropdown(subSel, data.mainCategory || '', data.subCategory || '');
+            renderRowBadges(row);
         }
 
         function removeIncomeRow(btn) {
@@ -1457,6 +2116,9 @@
                     particulars: 'Opening balance',
                     amount: openingVal,
                     head: 'Opening',
+                    mainCategory: 'Opening',
+                    subCategory: '',
+                    tags: [],
                     bankAmount: 0,
                     chequeCount: 0,
                     attachments: []
@@ -1467,59 +2129,30 @@
 
             const rows = document.querySelectorAll('#incomeTableBody tr');
             let added = 0;
+            const promises = [];
+
             rows.forEach(row => {
                 const ref = row.querySelector('.inc-ref').value.trim();
                 const particulars = row.querySelector('.inc-particulars').value.trim();
                 const amount = parseFloat(row.querySelector('.inc-amount').value);
-                const head = row.querySelector('.inc-head').value.trim() || 'General';
+                const mainCategory = row.querySelector('.inc-main-category').value;
+                const subCategory = row.querySelector('.inc-sub-category').value;
                 const fileInput = row.querySelector('.inc-file');
+
+                const tagsList = row.dataset.tags ? JSON.parse(row.dataset.tags) : [];
+                let studentObj = null;
+                if (row.dataset.studentAdmission) {
+                    studentObj = {
+                        admissionNumber: row.dataset.studentAdmission,
+                        name: row.dataset.studentName,
+                        rollNumber: row.dataset.studentRoll || ''
+                    };
+                }
+
                 if (!ref || !particulars || isNaN(amount) || amount === 0) {
-                    // skip incomplete rows
                     return;
                 }
-                // handle files
-                const attachments = [];
-                if (fileInput && fileInput.files.length > 0) {
-                    for (let f of fileInput.files) {
-                        const reader = new FileReader();
-                        // We'll store base64 in localStorage; for Supabase we upload later.
-                        // For simplicity, store as data URL.
-                        // But we need to handle async. We'll collect and store as data URLs.
-                        // Since we're in a loop, we'll use a synchronous approach with FileReader sync? No.
-                        // We'll use a simpler approach: store file names and base64 data.
-                        // For now, we'll push a placeholder and handle later.
-                        // Actually, let's use a callback approach - but for simplicity, we'll store base64.
-                        // We'll read files and store base64 in the attachment.
-                        try {
-                            const dataUrl = URL.createObjectURL(f);
-                            attachments.push({ name: f.name, type: f.type, data: dataUrl, size: f.size });
-                        } catch (e) {
-                            // fallback
-                            attachments.push({ name: f.name, type: f.type, data: '', size: f.size });
-                        }
-                    }
-                }
-                // Store in localStorage as base64 - we'll convert to base64 for storage.
-                // But to keep it simple, we'll use object URLs (which are ephemeral) - not good for localStorage.
-                // Let's use FileReader to read as base64.
-                // However, we can't do sync file reads. Let's handle this differently.
-                // We'll store the file data as base64 after reading.
-                // For now, we'll just store the file names and read them later.
-                // Actually, let's use a simpler approach: read files as base64 and store.
-                // We'll process files asynchronously.
 
-                // For now, we'll add the transaction without the file data, and then update it later.
-                // Or we can read files synchronously using FileReaderSync (not available in all browsers).
-                // Let's use a different approach: we'll read files as base64 using FileReader and then add the transaction.
-                // We'll use a promise to handle this.
-
-                // For simplicity, I'll store the file as base64 using FileReader.
-                // But since this is a bulk operation, we'll handle files one by one.
-                // I'll implement a simpler version: store file as base64 in the transaction.
-                // For the initial version, let's just store the file name and read it later.
-                // Actually, let's do it properly.
-
-                // We'll use a helper to read files as base64.
                 const filePromises = [];
                 if (fileInput && fileInput.files.length > 0) {
                     for (let f of fileInput.files) {
@@ -1527,75 +2160,66 @@
                     }
                 }
 
+                const txData = {
+                    type: 'income',
+                    date: date,
+                    reference: ref,
+                    particulars: particulars,
+                    amount: amount,
+                    head: mainCategory || 'General',
+                    mainCategory: mainCategory || 'General',
+                    subCategory: subCategory || '',
+                    tags: tagsList,
+                    student: studentObj,
+                    bankAmount: 0,
+                    chequeCount: 0,
+                    attachments: []
+                };
+
                 if (filePromises.length > 0) {
-                    Promise.all(filePromises).then(results => {
+                    const p = Promise.all(filePromises).then(results => {
                         const attachData = results.map((data, i) => ({
                             name: fileInput.files[i].name,
                             type: fileInput.files[i].type,
                             data: data,
                             size: fileInput.files[i].size
                         }));
-                        addTransaction({
-                            type: 'income',
-                            date: date,
-                            reference: ref,
-                            particulars: particulars,
-                            amount: amount,
-                            head: head,
-                            bankAmount: 0,
-                            chequeCount: 0,
-                            attachments: attachData
-                        });
+                        txData.attachments = attachData;
+                        addTransaction(txData);
                         added++;
-                        if (added === rows.length) {
-                            showToast('✅ ' + added + ' income entries added!', 'success');
-                            clearIncomeRows();
-                            renderIncomeList();
-                            renderTransactions();
-                            refreshDashboard();
-                            updatePreviewCounts();
-                        }
-                    }).catch(err => {
-                        showToast('Error reading files: ' + err.message, 'error');
                     });
+                    promises.push(p);
                 } else {
-                    // No files, add directly
-                    addTransaction({
-                        type: 'income',
-                        date: date,
-                        reference: ref,
-                        particulars: particulars,
-                        amount: amount,
-                        head: head,
-                        bankAmount: 0,
-                        chequeCount: 0,
-                        attachments: []
-                    });
+                    addTransaction(txData);
                     added++;
                 }
             });
 
-            // If no files were processed, handle the added count
-            if (added > 0) {
-                // Check if any rows had files - if so, the Promise.all above handles it
-                // But we need to check if any rows had files
-                const hasFiles = Array.from(rows).some(row => {
-                    const fileInput = row.querySelector('.inc-file');
-                    return fileInput && fileInput.files.length > 0;
-                });
-                if (!hasFiles) {
+            if (promises.length > 0) {
+                Promise.all(promises).then(() => {
                     showToast('✅ ' + added + ' income entries added!', 'success');
                     clearIncomeRows();
                     renderIncomeList();
                     renderTransactions();
                     refreshDashboard();
                     updatePreviewCounts();
-                }
+                }).catch(err => {
+                    showToast('Error: ' + err.message, 'error');
+                });
             } else {
-                if (!document.querySelector('#incomeTableBody tr')) {
-                    showToast('No entries to submit. Add some rows first.', 'error');
+                if (added > 0) {
+                    showToast('✅ ' + added + ' income entries added!', 'success');
+                    clearIncomeRows();
+                    renderIncomeList();
+                    renderTransactions();
+                    refreshDashboard();
+                    updatePreviewCounts();
                 } else {
-                    showToast('Please fill in all fields (Reference, Particulars, Amount).', 'error');
+                    if (!document.querySelector('#incomeTableBody tr')) {
+                        showToast('No entries to submit. Add some rows first.', 'error');
+                    } else {
+                        showToast('Please fill in all fields (Reference, Particulars, Amount).', 'error');
+                    }
                 }
             }
         }
@@ -1618,7 +2242,7 @@
 
         // ─── Render Income List ───
         function renderIncomeList() {
-            const list = transactions.filter(t => t.type === 'income' && t.head !== 'Opening')
+            const list = transactions.filter(t => !t.isDeleted && t.type === 'income' && t.head !== 'Opening')
                 .sort((a, b) => b.id - a.id)
                 .slice(0, 20);
             const container = document.getElementById('incomeList');
@@ -1626,19 +2250,32 @@
                 container.innerHTML = '<div class="empty-state"><span class="emoji">📭</span>No income entries yet.</div>';
                 return;
             }
-            container.innerHTML = list.map(t => `
-            <div class="tx-item">
-              <span class="tx-type income">Income</span>
-              <span class="tx-date">${t.date}</span>
-              <span class="tx-particulars">${t.reference} — ${t.particulars}</span>
-              <span class="tx-amount income">+₹${t.amount.toFixed(2)}</span>
-              <span class="tx-head">${t.head}</span>
-              ${t.attachments && t.attachments.length > 0 ? `<span class="tx-attach">📎${t.attachments.length}</span>` : ''}
-              <div class="tx-actions">
-                <button class="btn btn-danger btn-xs" onclick="deleteTransaction(${t.id});renderIncomeList();renderTransactions();refreshDashboard();updatePreviewCounts();">Delete</button>
-              </div>
-            </div>
-          `).join('');
+            container.innerHTML = list.map(t => {
+                const categoryLabel = t.subCategory ? `${t.mainCategory} ➔ ${t.subCategory}` : t.mainCategory;
+                let tagsHtml = '';
+                if (t.tags && t.tags.length > 0) {
+                    tagsHtml = t.tags.map(tag => `<span style="background: #f1f3f4; color: #5e6f8a; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">#${tag}</span>`).join('');
+                }
+                let studentHtml = t.student ? `<span style="background: #e8f0fe; color: #1a73e8; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">👤 ${t.student.name}</span>` : '';
+                
+                return `
+                <div class="tx-item">
+                  <span class="tx-type income">Income</span>
+                  <span class="tx-date">${t.date}</span>
+                  <span class="tx-particulars" style="flex: 2 1 180px;">
+                      ${t.reference} — ${t.particulars}
+                      ${studentHtml}
+                      ${tagsHtml}
+                  </span>
+                  <span class="tx-amount income">+₹${t.amount.toFixed(2)}</span>
+                  <span class="tx-head">${categoryLabel}</span>
+                  ${t.attachments && t.attachments.length > 0 ? `<span class="tx-attach">📎${t.attachments.length}</span>` : ''}
+                  <div class="tx-actions">
+                    <button class="btn btn-danger btn-xs" onclick="deleteTransaction(${t.id});renderIncomeList();renderTransactions();refreshDashboard();updatePreviewCounts();">Delete</button>
+                  </div>
+                </div>
+              `;
+            }).join('');
         }
 
         // ════════════════════════════════════════════════════════════════
@@ -1651,16 +2288,41 @@
             const row = document.createElement('tr');
             const idx = expenseRowCount++;
             row.dataset.idx = idx;
+
+            if (data.tags) {
+                row.dataset.tags = JSON.stringify(data.tags);
+            } else {
+                row.dataset.tags = "[]";
+            }
+            if (data.student) {
+                row.dataset.studentAdmission = data.student.admissionNumber;
+                row.dataset.studentName = data.student.name;
+                row.dataset.studentRoll = data.student.rollNumber || '';
+            }
+
             row.innerHTML = `
             <td><input type="text" class="exp-ref" value="${data.reference || ''}" placeholder="Voucher No." /></td>
-            <td><input type="text" class="exp-particulars" value="${data.particulars || ''}" placeholder="Description" /></td>
+            <td>
+                <input type="text" class="exp-particulars" value="${data.particulars || ''}" placeholder="Description" />
+                <div class="row-badges" style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;"></div>
+            </td>
             <td><input type="number" class="exp-amount" value="${data.amount || ''}" step="0.01" placeholder="0.00" /></td>
             <td><input type="number" class="exp-cheques" value="${data.chequeCount || 0}" step="1" min="0" placeholder="0" /></td>
-            <td><input type="text" class="exp-head" value="${data.head || ''}" placeholder="Head" /></td>
+            <td>
+                <select class="exp-main-category" style="margin-bottom:4px;"></select>
+                <select class="exp-sub-category" disabled></select>
+            </td>
             <td><input type="file" class="exp-file" accept="image/*,application/pdf" multiple /></td>
             <td><button class="btn btn-danger btn-xs" onclick="removeExpenseRow(this)">✕</button></td>
           `;
             tbody.appendChild(row);
+
+            const mainSel = row.querySelector('.exp-main-category');
+            const subSel = row.querySelector('.exp-sub-category');
+
+            populateMainCategoryDropdown(mainSel, 'expense', data.mainCategory || '');
+            populateSubCategoryDropdown(subSel, data.mainCategory || '', data.subCategory || '');
+            renderRowBadges(row);
         }
 
         function removeExpenseRow(btn) {
@@ -1681,8 +2343,19 @@
                 const particulars = row.querySelector('.exp-particulars').value.trim();
                 const amount = parseFloat(row.querySelector('.exp-amount').value);
                 const chequeCount = parseInt(row.querySelector('.exp-cheques').value) || 0;
-                const head = row.querySelector('.exp-head').value.trim() || 'General';
+                const mainCategory = row.querySelector('.exp-main-category').value;
+                const subCategory = row.querySelector('.exp-sub-category').value;
                 const fileInput = row.querySelector('.exp-file');
+
+                const tagsList = row.dataset.tags ? JSON.parse(row.dataset.tags) : [];
+                let studentObj = null;
+                if (row.dataset.studentAdmission) {
+                    studentObj = {
+                        admissionNumber: row.dataset.studentAdmission,
+                        name: row.dataset.studentName,
+                        rollNumber: row.dataset.studentRoll || ''
+                    };
+                }
 
                 if (!ref || !particulars || isNaN(amount) || amount === 0) {
                     return;
@@ -1701,7 +2374,11 @@
                     reference: ref,
                     particulars: particulars,
                     amount: amount,
-                    head: head,
+                    head: mainCategory || 'General',
+                    mainCategory: mainCategory || 'General',
+                    subCategory: subCategory || '',
+                    tags: tagsList,
+                    student: studentObj,
                     bankAmount: amount,
                     chequeCount: chequeCount,
                     attachments: []
@@ -1763,7 +2440,7 @@
 
         // ─── Render Expense List ───
         function renderExpenseList() {
-            const list = transactions.filter(t => t.type === 'expense')
+            const list = transactions.filter(t => !t.isDeleted && t.type === 'expense')
                 .sort((a, b) => b.id - a.id)
                 .slice(0, 20);
             const container = document.getElementById('expenseList');
@@ -1771,19 +2448,32 @@
                 container.innerHTML = '<div class="empty-state"><span class="emoji">📭</span>No expense entries yet.</div>';
                 return;
             }
-            container.innerHTML = list.map(t => `
-            <div class="tx-item">
-              <span class="tx-type expense">Expense</span>
-              <span class="tx-date">${t.date}</span>
-              <span class="tx-particulars">${t.reference} — ${t.particulars}</span>
-              <span class="tx-amount expense">-₹${t.amount.toFixed(2)}</span>
-              <span class="tx-head">${t.head}</span>
-              ${t.attachments && t.attachments.length > 0 ? `<span class="tx-attach">📎${t.attachments.length}</span>` : ''}
-              <div class="tx-actions">
-                <button class="btn btn-danger btn-xs" onclick="deleteTransaction(${t.id});renderExpenseList();renderTransactions();refreshDashboard();updatePreviewCounts();">Delete</button>
-              </div>
-            </div>
-          `).join('');
+            container.innerHTML = list.map(t => {
+                const categoryLabel = t.subCategory ? `${t.mainCategory} ➔ ${t.subCategory}` : t.mainCategory;
+                let tagsHtml = '';
+                if (t.tags && t.tags.length > 0) {
+                    tagsHtml = t.tags.map(tag => `<span style="background: #f1f3f4; color: #5e6f8a; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">#${tag}</span>`).join('');
+                }
+                let studentHtml = t.student ? `<span style="background: #e8f0fe; color: #1a73e8; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">👤 ${t.student.name}</span>` : '';
+                
+                return `
+                <div class="tx-item">
+                  <span class="tx-type expense">Expense</span>
+                  <span class="tx-date">${t.date}</span>
+                  <span class="tx-particulars" style="flex: 2 1 180px;">
+                      ${t.reference} — ${t.particulars}
+                      ${studentHtml}
+                      ${tagsHtml}
+                  </span>
+                  <span class="tx-amount expense">-₹${t.amount.toFixed(2)}</span>
+                  <span class="tx-head">${categoryLabel}</span>
+                  ${t.attachments && t.attachments.length > 0 ? `<span class="tx-attach">📎${t.attachments.length}</span>` : ''}
+                  <div class="tx-actions">
+                    <button class="btn btn-danger btn-xs" onclick="deleteTransaction(${t.id});renderExpenseList();renderTransactions();refreshDashboard();updatePreviewCounts();">Delete</button>
+                  </div>
+                </div>
+              `;
+            }).join('');
         }
 
         // ════════════════════════════════════════════════════════════════
@@ -1793,9 +2483,20 @@
             const type = document.getElementById('txFilterType').value;
             const dateFrom = document.getElementById('txFilterDateFrom').value;
             const dateTo = document.getElementById('txFilterDateTo').value;
+            const amountMin = document.getElementById('txFilterAmountMin').value;
+            const amountMax = document.getElementById('txFilterAmountMax').value;
+            const mainCategory = document.getElementById('txFilterMainCategory').value;
+            const subCategory = document.getElementById('txFilterSubCategory').value;
             const search = document.getElementById('txFilterSearch').value;
+            const sortBy = document.getElementById('txSortBy').value;
+            const sortOrder = document.getElementById('txSortOrder').value;
+            const showDeleted = document.getElementById('txFilterShowDeleted').checked;
 
-            const filtered = getTransactions({ type, dateFrom, dateTo, search });
+            const filtered = getTransactions({ 
+                type, dateFrom, dateTo, search, 
+                amountFrom: amountMin, amountTo: amountMax, 
+                mainCategory, subCategory, sortBy, sortOrder, showDeleted 
+            });
             const container = document.getElementById('transactionList');
             document.getElementById('txCountDisplay').textContent = 'Showing ' + filtered.length + ' transactions';
 
@@ -1808,30 +2509,109 @@
                 const isIncome = t.type === 'income';
                 const sign = isIncome ? '+' : '-';
                 const cls = isIncome ? 'income' : 'expense';
+                
+                // Construct tags HTML
+                let tagsHtml = '';
+                if (t.tags && t.tags.length > 0) {
+                    tagsHtml = t.tags.map(tag => `
+                        <span style="background: #f1f3f4; color: #5e6f8a; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px;">#${tag}</span>
+                    `).join('');
+                }
+                
+                // Construct student HTML
+                let studentHtml = '';
+                if (t.student) {
+                    studentHtml = `
+                        <span style="background: #e8f0fe; color: #1a73e8; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px;">
+                            👤 ${t.student.name} (${t.student.admissionNumber})
+                        </span>
+                    `;
+                }
+
+                // Construct audit string
+                const creator = t.createdBy || 'Unknown';
+                const createdTime = t.createdAt ? new Date(t.createdAt).toLocaleString() : 'Unknown';
+                const updater = t.updatedBy || creator;
+                const updatedTime = t.updatedAt ? new Date(t.updatedAt).toLocaleString() : createdTime;
+                
+                let auditHtml = `
+                    <div style="font-size: 11px; color: #7f8c8d; margin-top: 4px;">
+                        Created by <b>${creator}</b> on ${createdTime}
+                        ${updater !== creator || updatedTime !== createdTime ? ` | Last updated by <b>${updater}</b> on ${updatedTime}` : ''}
+                        ${t.isDeleted ? ` | <span style="color:#b13e3e; font-weight:bold;">Archived (Deleted) by ${t.deletedBy || 'unknown'}</span>` : ''}
+                    </div>
+                `;
+
+                const categoryLabel = t.subCategory ? `${t.mainCategory} ➔ ${t.subCategory}` : t.mainCategory;
+
                 const attachInfo = t.attachments && t.attachments.length > 0 ?
                     `<span class="tx-attach" onclick="viewAttachments(${t.id})">📎${t.attachments.length}</span>` :
                     '';
+                
                 return `
-              <div class="tx-item">
+              <div class="tx-item" style="${t.isDeleted ? 'opacity: 0.6; border-style: dashed; background: #faf5f5;' : ''}">
                 <span class="tx-type ${cls}">${isIncome ? 'Income' : 'Expense'}</span>
                 <span class="tx-date">${t.date}</span>
-                <span class="tx-particulars">${t.reference} — ${t.particulars}</span>
+                <div class="tx-particulars" style="display:flex; flex-direction:column; gap:4px; flex: 2 1 180px;">
+                    <div>${t.reference} — ${t.particulars}</div>
+                    <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                        ${studentHtml}
+                        ${tagsHtml}
+                    </div>
+                    ${auditHtml}
+                </div>
                 <span class="tx-amount ${cls}">${sign}₹${t.amount.toFixed(2)}</span>
-                <span class="tx-head">${t.head}</span>
+                <span class="tx-head" style="font-weight:600; font-size:12px; max-width:180px; text-overflow:ellipsis; overflow:hidden;">${categoryLabel}</span>
                 ${attachInfo}
-                <div class="tx-actions">
-                  <button class="btn btn-danger btn-xs" onclick="deleteTransaction(${t.id});renderTransactions();refreshDashboard();updatePreviewCounts();renderIncomeList();renderExpenseList();">Delete</button>
+                <div class="tx-actions" style="display:flex; gap:4px; align-items:center; margin-left:auto;">
+                  ${t.isDeleted ? `
+                     <button class="btn btn-outline btn-xs" onclick="restoreTransaction(${t.id})">Restore</button>
+                  ` : `
+                     <button class="btn btn-outline btn-xs" onclick="showEditTxModal(${t.id})">Edit</button>
+                     <button class="btn btn-danger btn-xs" onclick="deleteTransaction(${t.id});renderTransactions();refreshDashboard();updatePreviewCounts();renderIncomeList();renderExpenseList();">Delete</button>
+                  `}
+                  <button class="btn btn-outline btn-xs" onclick="showHistoryTxModal(${t.id})">History</button>
                 </div>
               </div>
             `;
             }).join('');
         }
 
+        window.restoreTransaction = function(id) {
+            const tx = transactions.find(t => t.id === id);
+            if (!tx) return;
+            const oldTx = JSON.parse(JSON.stringify(tx));
+            
+            tx.isDeleted = false;
+            delete tx.deletedBy;
+            tx.updatedBy = currentUser ? currentUser.email : 'Offline User';
+            tx.updatedAt = new Date().toISOString();
+            
+            saveData();
+            trackRevision('RESTORE', oldTx, tx);
+            
+            if (supabaseClient && supaConfig) {
+                pushSingleTransactionToSupabase(tx);
+            }
+            renderTransactions();
+            refreshDashboard();
+            updatePreviewCounts();
+            renderIncomeList();
+            renderExpenseList();
+        };
+
         function resetTxFilters() {
             document.getElementById('txFilterDateFrom').value = '';
             document.getElementById('txFilterDateTo').value = '';
-            document.getElementById('txFilterType').value = 'all';
+            document.getElementById('txFilterAmountMin').value = '';
+            document.getElementById('txFilterAmountMax').value = '';
+            document.getElementById('txFilterMainCategory').value = '';
+            populateSubCategoryDropdown(document.getElementById('txFilterSubCategory'), '');
             document.getElementById('txFilterSearch').value = '';
+            document.getElementById('txSortBy').value = 'id';
+            document.getElementById('txSortOrder').value = 'desc';
+            document.getElementById('txFilterType').value = 'all';
+            document.getElementById('txFilterShowDeleted').checked = false;
             renderTransactions();
         }
 
@@ -1863,6 +2643,116 @@
         // ════════════════════════════════════════════════════════════════
         //  SUPABASE
         // ════════════════════════════════════════════════════════════════
+        async function fetchConfigFromDNS(domain) {
+            try {
+                const url = `https://dns.google/resolve?name=${encodeURIComponent(domain)}&type=TXT`;
+                const res = await fetch(url);
+                if (!res.ok) throw new Error("DNS lookup failed");
+                const data = await res.json();
+                if (!data.Answer) return null;
+                
+                let fetchedConfig = {};
+                data.Answer.forEach(ans => {
+                    if (ans.type === 16) {
+                        let txtData = ans.data;
+                        if (txtData.startsWith('"') && txtData.endsWith('"')) {
+                            txtData = txtData.substring(1, txtData.length - 1);
+                        }
+                        if (txtData.startsWith('supabase-url=')) {
+                            fetchedConfig.url = txtData.replace('supabase-url=', '').trim();
+                        } else if (txtData.startsWith('supabase-key=')) {
+                            fetchedConfig.key = txtData.replace('supabase-key=', '').trim();
+                        } else if (txtData.startsWith('supabase-table=')) {
+                            fetchedConfig.table = txtData.replace('supabase-table=', '').trim();
+                        } else if (txtData.startsWith('supabase-bucket=')) {
+                            fetchedConfig.bucket = txtData.replace('supabase-bucket=', '').trim();
+                        }
+                    }
+                });
+                if (fetchedConfig.url && fetchedConfig.key) {
+                    return fetchedConfig;
+                }
+            } catch(e) {
+                console.error("DNS TXT query failed:", e);
+            }
+            return null;
+        }
+
+        async function loadSupabaseConfigFromNameserver(customDomain = null) {
+            let config = null;
+
+            // 1. Try to fetch from the local 'nameserver' host if available
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 2000);
+                const res = await fetch('http://nameserver/supabase-config.json', { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.url && data.key) {
+                        config = data;
+                        console.log("Config loaded from local nameserver host");
+                    }
+                }
+            } catch (e) {
+                console.log("Local nameserver host not available:", e);
+            }
+
+            // 2. Try to fetch from same origin (relative path)
+            if (!config) {
+                try {
+                    const res = await fetch('/supabase-config.json');
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.url && data.key) {
+                            config = data;
+                            console.log("Config loaded from same-origin path");
+                        }
+                    }
+                } catch (e) {
+                    console.log("Same-origin config file not available:", e);
+                }
+            }
+
+            // 3. Try DNS TXT record lookup
+            if (!config) {
+                const domain = customDomain || window.location.hostname;
+                if (domain && domain !== 'localhost' && domain !== '127.0.0.1') {
+                    config = await fetchConfigFromDNS(domain);
+                    if (config) {
+                        console.log("Config loaded from DNS TXT records for domain:", domain);
+                    }
+                }
+            }
+
+            if (config) {
+                supaConfig = {
+                    url: config.url,
+                    key: config.key,
+                    table: config.table || 'transactions',
+                    bucket: config.bucket || 'receipts'
+                };
+                
+                // Update inputs in settings if they exist
+                const supaUrlEl = document.getElementById('supaUrl');
+                const supaKeyEl = document.getElementById('supaKey');
+                const supaTableEl = document.getElementById('supaTable');
+                const supaBucketEl = document.getElementById('supaBucket');
+                
+                if (supaUrlEl) supaUrlEl.value = supaConfig.url;
+                if (supaKeyEl) supaKeyEl.value = supaConfig.key;
+                if (supaTableEl) supaTableEl.value = supaConfig.table;
+                if (supaBucketEl) supaBucketEl.value = supaConfig.bucket;
+                
+                localStorage.setItem(CONFIG_KEY, JSON.stringify(supaConfig));
+                initSupabase();
+                updateSupabaseStatus();
+                showToast('✅ Supabase config loaded from nameserver!', 'success');
+                return true;
+            }
+            return false;
+        }
+
         function loadSupabaseConfig() {
             const raw = localStorage.getItem(CONFIG_KEY);
             if (raw) {
@@ -1877,6 +2767,9 @@
                     return supaConfig;
                 } catch (e) { supaConfig = null; }
             }
+            
+            // Try loading from nameserver
+            loadSupabaseConfigFromNameserver();
             return null;
         }
 
@@ -2167,6 +3060,817 @@
         }
 
         // ════════════════════════════════════════════════════════════════
+        //  AUTOCOMPLETE & BADGES & METADATA EXTRACTION
+        // ════════════════════════════════════════════════════════════════
+        let activeInput = null;
+        let activeRow = null;
+        let triggerChar = null;
+        let triggerIndex = -1;
+        let selectedIndex = 0;
+        let filteredOptions = [];
+
+        // Attach event listeners to inputs for autocomplete
+        document.addEventListener('input', handleAutocompleteInput);
+        document.addEventListener('keydown', handleAutocompleteKeydown);
+        document.addEventListener('click', function(e) {
+            const dropdown = document.getElementById('autocompleteDropdown');
+            if (dropdown && !dropdown.contains(e.target) && e.target !== activeInput) {
+                dropdown.style.display = 'none';
+            }
+        });
+
+        function handleAutocompleteInput(e) {
+            const input = e.target;
+            if (!input.classList.contains('inc-particulars') && 
+                !input.classList.contains('exp-particulars') && 
+                input.id !== 'editTxParticulars') {
+                return;
+            }
+
+            activeInput = input;
+            activeRow = input.closest('tr');
+
+            const cursor = input.selectionStart;
+            const text = input.value.substring(0, cursor);
+
+            // Find last @ or #
+            const lastAt = text.lastIndexOf('@');
+            const lastHash = text.lastIndexOf('#');
+
+            let trigger = null;
+            let index = -1;
+
+            if (lastAt !== -1 && (lastHash === -1 || lastAt > lastHash)) {
+                const after = text.substring(lastAt + 1);
+                if (!after.includes(' ') && !after.includes('\n')) {
+                    trigger = '@';
+                    index = lastAt;
+                }
+            } else if (lastHash !== -1 && (lastAt === -1 || lastHash > lastAt)) {
+                const after = text.substring(lastHash + 1);
+                if (!after.includes(' ') && !after.includes('\n')) {
+                    trigger = '#';
+                    index = lastHash;
+                }
+            }
+
+            if (trigger) {
+                triggerChar = trigger;
+                triggerIndex = index;
+                const query = text.substring(index + 1).toLowerCase();
+                showAutocompleteDropdown(query);
+            } else {
+                hideAutocompleteDropdown();
+            }
+        }
+
+        function showAutocompleteDropdown(query) {
+            const dropdown = document.getElementById('autocompleteDropdown');
+            if (!dropdown) return;
+
+            if (triggerChar === '@') {
+                // filter students
+                filteredOptions = students.filter(s => 
+                    s.name.toLowerCase().includes(query) || 
+                    s.admissionNumber.toLowerCase().includes(query) ||
+                    (s.rollNumber && s.rollNumber.toLowerCase().includes(query))
+                );
+                // sort startsWith first
+                filteredOptions.sort((a, b) => {
+                    const aStart = a.name.toLowerCase().startsWith(query);
+                    const bStart = b.name.toLowerCase().startsWith(query);
+                    if (aStart && !bStart) return -1;
+                    if (!aStart && bStart) return 1;
+                    return a.name.localeCompare(b.name);
+                });
+                filteredOptions = filteredOptions.slice(0, 10);
+            } else {
+                // filter tags
+                filteredOptions = tags.filter(t => t.toLowerCase().includes(query));
+                filteredOptions.sort((a, b) => {
+                    const aStart = a.toLowerCase().startsWith(query);
+                    const bStart = b.toLowerCase().startsWith(query);
+                    if (aStart && !bStart) return -1;
+                    if (!aStart && bStart) return 1;
+                    return a.localeCompare(b);
+                });
+                filteredOptions = filteredOptions.slice(0, 10);
+            }
+
+            if (filteredOptions.length === 0) {
+                dropdown.style.display = 'none';
+                return;
+            }
+
+            selectedIndex = 0;
+            renderAutocompleteOptions();
+
+            const rect = activeInput.getBoundingClientRect();
+            dropdown.style.top = (window.scrollY + rect.bottom) + 'px';
+            dropdown.style.left = (window.scrollX + rect.left) + 'px';
+            dropdown.style.display = 'block';
+        }
+
+        function renderAutocompleteOptions() {
+            const dropdown = document.getElementById('autocompleteDropdown');
+            if (!dropdown) return;
+
+            dropdown.innerHTML = filteredOptions.map((opt, i) => {
+                const isSelected = i === selectedIndex;
+                const highlightStyle = isSelected ? 'background: #e8f0fe; font-weight: 600;' : '';
+                
+                if (triggerChar === '@') {
+                    return `
+                        <div class="auto-opt" data-idx="${i}" style="padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #f0f4fa; font-size: 13px; ${highlightStyle}">
+                            👤 <b>${opt.name}</b> <span style="color:#5e6f8a; font-size:11px;">(Adm: ${opt.admissionNumber}${opt.rollNumber ? `, Roll: ${opt.rollNumber}` : ''})</span>
+                        </div>
+                    `;
+                } else {
+                    return `
+                        <div class="auto-opt" data-idx="${i}" style="padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #f0f4fa; font-size: 13px; ${highlightStyle}">
+                            🏷️ <b>#${opt}</b>
+                        </div>
+                    `;
+                }
+            }).join('');
+
+            dropdown.querySelectorAll('.auto-opt').forEach(el => {
+                el.addEventListener('click', function() {
+                    selectedIndex = parseInt(this.dataset.idx);
+                    selectAutocompleteOption();
+                });
+            });
+        }
+
+        function selectAutocompleteOption() {
+            if (selectedIndex < 0 || selectedIndex >= filteredOptions.length) return;
+            const option = filteredOptions[selectedIndex];
+            const input = activeInput;
+
+            const cursor = input.selectionStart;
+            const beforeTrigger = input.value.substring(0, triggerIndex);
+            const afterCursor = input.value.substring(cursor);
+
+            if (triggerChar === '@') {
+                const insertText = `@${option.name} `;
+                input.value = beforeTrigger + insertText + afterCursor;
+                input.focus();
+                
+                const newCursorPos = triggerIndex + insertText.length;
+                input.setSelectionRange(newCursorPos, newCursorPos);
+
+                if (activeRow) {
+                    activeRow.dataset.studentAdmission = option.admissionNumber;
+                    activeRow.dataset.studentName = option.name;
+                    activeRow.dataset.studentRoll = option.rollNumber || '';
+                    renderRowBadges(activeRow);
+                } else if (input.id === 'editTxParticulars') {
+                    input.dataset.studentAdmission = option.admissionNumber;
+                    input.dataset.studentName = option.name;
+                    input.dataset.studentRoll = option.rollNumber || '';
+                    renderEditTxBadges();
+                }
+            } else {
+                const insertText = `#${option} `;
+                input.value = beforeTrigger + insertText + afterCursor;
+                input.focus();
+
+                const newCursorPos = triggerIndex + insertText.length;
+                input.setSelectionRange(newCursorPos, newCursorPos);
+
+                if (activeRow) {
+                    const tagsList = JSON.parse(activeRow.dataset.tags || '[]');
+                    if (!tagsList.includes(option)) {
+                        tagsList.push(option);
+                    }
+                    activeRow.dataset.tags = JSON.stringify(tagsList);
+                    renderRowBadges(activeRow);
+                } else if (input.id === 'editTxParticulars') {
+                    const tagsList = JSON.parse(input.dataset.tags || '[]');
+                    if (!tagsList.includes(option)) {
+                        tagsList.push(option);
+                    }
+                    input.dataset.tags = JSON.stringify(tagsList);
+                    renderEditTxBadges();
+                }
+            }
+
+            hideAutocompleteDropdown();
+        }
+
+        function hideAutocompleteDropdown() {
+            const dropdown = document.getElementById('autocompleteDropdown');
+            if (dropdown) {
+                dropdown.style.display = 'none';
+            }
+        }
+
+        function handleAutocompleteKeydown(e) {
+            const dropdown = document.getElementById('autocompleteDropdown');
+            if (!dropdown || dropdown.style.display === 'none') return;
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                selectedIndex = (selectedIndex + 1) % filteredOptions.length;
+                renderAutocompleteOptions();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                selectedIndex = (selectedIndex - 1 + filteredOptions.length) % filteredOptions.length;
+                renderAutocompleteOptions();
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                selectAutocompleteOption();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                hideAutocompleteDropdown();
+            }
+        }
+
+        function renderRowBadges(row) {
+            const badgesContainer = row.querySelector('.row-badges');
+            if (!badgesContainer) return;
+            badgesContainer.innerHTML = '';
+
+            if (row.dataset.studentName) {
+                const sBadge = document.createElement('span');
+                sBadge.style = "background: #e8f0fe; color: #1a73e8; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px; margin-top: 4px;";
+                sBadge.innerHTML = `👤 ${row.dataset.studentName} <span class="remove" style="cursor:pointer; color:#b13e3e; margin-left:4px; font-weight:bold;">✕</span>`;
+                sBadge.querySelector('.remove').addEventListener('click', () => {
+                    delete row.dataset.studentAdmission;
+                    delete row.dataset.studentName;
+                    delete row.dataset.studentRoll;
+                    renderRowBadges(row);
+                });
+                badgesContainer.appendChild(sBadge);
+            }
+
+            const tagsList = JSON.parse(row.dataset.tags || '[]');
+            tagsList.forEach(tag => {
+                const tBadge = document.createElement('span');
+                tBadge.style = "background: #f1f3f4; color: #5e6f8a; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px; margin-top: 4px;";
+                tBadge.innerHTML = `#${tag} <span class="remove" style="cursor:pointer; color:#b13e3e; margin-left:4px; font-weight:bold;">✕</span>`;
+                tBadge.querySelector('.remove').addEventListener('click', () => {
+                    const newTags = tagsList.filter(t => t !== tag);
+                    row.dataset.tags = JSON.stringify(newTags);
+                    renderRowBadges(row);
+                });
+                badgesContainer.appendChild(tBadge);
+            });
+        }
+
+        function renderEditTxBadges() {
+            const input = document.getElementById('editTxParticulars');
+            const badgesContainer = document.getElementById('editTxBadges');
+            if (!badgesContainer || !input) return;
+            badgesContainer.innerHTML = '';
+
+            if (input.dataset.studentName) {
+                const sBadge = document.createElement('span');
+                sBadge.style = "background: #e8f0fe; color: #1a73e8; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px; margin-top: 4px;";
+                sBadge.innerHTML = `👤 ${input.dataset.studentName} <span class="remove" style="cursor:pointer; color:#b13e3e; margin-left:4px; font-weight:bold;">✕</span>`;
+                sBadge.querySelector('.remove').addEventListener('click', () => {
+                    delete input.dataset.studentAdmission;
+                    delete input.dataset.studentName;
+                    delete input.dataset.studentRoll;
+                    renderEditTxBadges();
+                });
+                badgesContainer.appendChild(sBadge);
+            }
+
+            const tagsList = JSON.parse(input.dataset.tags || '[]');
+            tagsList.forEach(tag => {
+                const tBadge = document.createElement('span');
+                tBadge.style = "background: #f1f3f4; color: #5e6f8a; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px; margin-top: 4px;";
+                tBadge.innerHTML = `#${tag} <span class="remove" style="cursor:pointer; color:#b13e3e; margin-left:4px; font-weight:bold;">✕</span>`;
+                tBadge.querySelector('.remove').addEventListener('click', () => {
+                    const newTags = tagsList.filter(t => t !== tag);
+                    input.dataset.tags = JSON.stringify(newTags);
+                    renderEditTxBadges();
+                });
+                badgesContainer.appendChild(tBadge);
+            });
+        }
+
+        // Extracts tags and student details from plain text if datasets are missing
+        function extractMetadataFromParticulars(particulars, currentTagsList, currentStudentObj) {
+            let tagsList = [...currentTagsList];
+            let studentObj = currentStudentObj ? { ...currentStudentObj } : null;
+            
+            const tagMatches = particulars.match(/#([^\s,#]+)/g);
+            if (tagMatches) {
+                tagMatches.forEach(m => {
+                    const tagName = m.substring(1).toLowerCase();
+                    if (!tagsList.includes(tagName)) {
+                        tagsList.push(tagName);
+                    }
+                });
+            }
+            
+            const studentMatches = particulars.match(/@([^\s,@]+)/g);
+            if (studentMatches && !studentObj) {
+                const nameQuery = studentMatches[0].substring(1).toLowerCase();
+                const found = students.find(s => s.name.toLowerCase().includes(nameQuery));
+                if (found) {
+                    studentObj = found;
+                }
+            }
+            return { tagsList, studentObj };
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  CATEGORIES & TAGS IN BULK INPUTS
+        // ════════════════════════════════════════════════════════════════
+        function populateMainCategoryDropdown(selectEl, type, defaultValue) {
+            if (!selectEl) return;
+            selectEl.innerHTML = '';
+            
+            const defOpt = document.createElement('option');
+            defOpt.value = '';
+            defOpt.textContent = selectEl.id === 'txFilterMainCategory' ? 'All Categories' : 'Select Category';
+            selectEl.appendChild(defOpt);
+            
+            const mainCats = categories.filter(c => c.parent_id === null);
+            mainCats.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.name;
+                opt.textContent = c.name;
+                selectEl.appendChild(opt);
+            });
+            
+            if (defaultValue) {
+                selectEl.value = defaultValue;
+            }
+            
+            // Re-bind change handler dynamically for row inputs
+            if (selectEl.classList.contains('inc-main-category') || selectEl.classList.contains('exp-main-category') || selectEl.id === 'editTxMainCategory') {
+                selectEl.onchange = function() {
+                    const row = this.closest('tr') || document.getElementById('editTxModal');
+                    const subSel = row.querySelector('.inc-sub-category') || row.querySelector('.exp-sub-category') || document.getElementById('editTxSubCategory');
+                    populateSubCategoryDropdown(subSel, this.value, '');
+                };
+            }
+        }
+
+        function populateSubCategoryDropdown(selectEl, mainCategoryName, defaultValue) {
+            if (!selectEl) return;
+            selectEl.innerHTML = '';
+            
+            const defOpt = document.createElement('option');
+            defOpt.value = '';
+            defOpt.textContent = selectEl.id === 'txFilterSubCategory' ? 'All Subs' : 'Select Subcategory';
+            selectEl.appendChild(defOpt);
+            
+            if (!mainCategoryName) {
+                selectEl.disabled = true;
+                return;
+            }
+            
+            const parent = categories.find(c => c.name === mainCategoryName && c.parent_id === null);
+            if (!parent) {
+                selectEl.disabled = true;
+                return;
+            }
+            
+            const subs = categories.filter(c => c.parent_id === parent.id);
+            if (subs.length === 0) {
+                selectEl.disabled = true;
+                return;
+            }
+            
+            selectEl.disabled = false;
+            subs.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.name;
+                opt.textContent = s.name;
+                selectEl.appendChild(opt);
+            });
+            
+            if (defaultValue) {
+                selectEl.value = defaultValue;
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  SETTINGS: CATEGORIES & TAGS EDITORS
+        // ════════════════════════════════════════════════════════════════
+        window.showAddCategoryPrompt = function() {
+            const name = prompt("Enter new Main Category name:");
+            if (!name || !name.trim()) return;
+            
+            const trimmed = name.trim();
+            const existing = categories.find(c => c.name.toLowerCase() === trimmed.toLowerCase() && c.parent_id === null);
+            if (existing) {
+                showToast("Main Category already exists!", "error");
+                return;
+            }
+            
+            const nextCatId = categories.length > 0 ? Math.max(...categories.map(c => c.id)) + 1 : 1;
+            categories.push({ id: nextCatId, name: trimmed, parent_id: null, type: 'all' });
+            saveCategories();
+            renderSettingsCategories();
+            
+            if (supabaseClient && supaConfig) {
+                supabaseClient.from('categories').insert({ id: nextCatId, name: trimmed, parent_id: null, type: 'all' }).then(({ error }) => {
+                    if (error) console.error("Supabase category insert failed:", error);
+                });
+            }
+            populateMainCategoryDropdown(document.getElementById('txFilterMainCategory'), 'all', '');
+        };
+
+        window.addSubCategoryPrompt = function(parentId) {
+            const name = prompt("Enter subcategory name:");
+            if (!name || !name.trim()) return;
+            const trimmed = name.trim();
+            
+            const existing = categories.find(c => c.name.toLowerCase() === trimmed.toLowerCase() && c.parent_id === parentId);
+            if (existing) {
+                showToast("Subcategory already exists!", "error");
+                return;
+            }
+            
+            const nextCatId = categories.length > 0 ? Math.max(...categories.map(c => c.id)) + 1 : 1;
+            categories.push({ id: nextCatId, name: trimmed, parent_id: parentId, type: 'all' });
+            saveCategories();
+            renderSettingsCategories();
+            
+            if (supabaseClient && supaConfig) {
+                supabaseClient.from('categories').insert({ id: nextCatId, name: trimmed, parent_id: parentId, type: 'all' }).then(({ error }) => {
+                    if (error) console.error("Supabase subcategory insert failed:", error);
+                });
+            }
+        };
+
+        window.deleteCategory = function(id) {
+            if (!confirm("Are you sure you want to delete this category? Deleting a main category will also delete its subcategories.")) return;
+            
+            const toDeleteIds = [id];
+            categories.forEach(c => {
+                if (c.parent_id === id) {
+                    toDeleteIds.push(c.id);
+                }
+            });
+            
+            categories = categories.filter(c => !toDeleteIds.includes(c.id));
+            saveCategories();
+            renderSettingsCategories();
+            
+            if (supabaseClient && supaConfig) {
+                supabaseClient.from('categories').delete().in('id', toDeleteIds).then(({ error }) => {
+                    if (error) console.error("Supabase category delete failed:", error);
+                });
+            }
+            populateMainCategoryDropdown(document.getElementById('txFilterMainCategory'), 'all', '');
+        };
+
+        function renderSettingsCategories() {
+            const container = document.getElementById('settingsCategoriesList');
+            if (!container) return;
+            
+            const mainCats = categories.filter(c => c.parent_id === null);
+            if (mainCats.length === 0) {
+                container.innerHTML = '<div class="text-muted">No categories defined.</div>';
+                return;
+            }
+            
+            container.innerHTML = mainCats.map(parent => {
+                const subs = categories.filter(c => c.parent_id === parent.id);
+                const subsHtml = subs.map(sub => `
+                    <div style="margin-left: 20px; display: flex; align-items: center; gap: 8px; padding: 2px 0;">
+                        <span>↳ ${sub.name}</span>
+                        <button class="btn btn-danger btn-xs" style="padding: 0px 4px; font-size: 9px;" onclick="deleteCategory(${sub.id})">✕</button>
+                    </div>
+                `).join('');
+                
+                return `
+                    <div style="background:#f9fbfe; padding:8px 12px; border-radius:8px; border: 1px solid #e6ecf3; margin-bottom: 8px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; font-weight:600; color:#0b2a4a;">
+                            <span>📁 ${parent.name}</span>
+                            <div style="display:flex; gap:4px;">
+                                <button class="btn btn-primary btn-xs" style="font-size:10px; padding:1px 6px;" onclick="addSubCategoryPrompt(${parent.id})">+ Add Sub</button>
+                                <button class="btn btn-danger btn-xs" style="font-size:10px; padding:1px 6px;" onclick="deleteCategory(${parent.id})">✕</button>
+                            </div>
+                        </div>
+                        <div style="margin-top:4px;">
+                            ${subsHtml || '<div style="margin-left:20px; font-size:11px; color:#95a5a6; font-style:italic;">No subcategories</div>'}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        window.showAddTagPrompt = function() {
+            const name = prompt("Enter new tag (without #):");
+            if (!name || !name.trim()) return;
+            const trimmed = name.trim().toLowerCase().replace(/#/g, '');
+            if (tags.includes(trimmed)) {
+                showToast("Tag already exists!", "error");
+                return;
+            }
+            tags.push(trimmed);
+            saveTags();
+            renderSettingsTags();
+            
+            if (supabaseClient && supaConfig) {
+                supabaseClient.from('tags').insert({ name: trimmed }).then(({ error }) => {
+                    if (error) console.error("Supabase tag insert failed:", error);
+                });
+            }
+        };
+
+        window.deleteTag = function(tag) {
+            if (!confirm(`Are you sure you want to delete tag #${tag}?`)) return;
+            tags = tags.filter(t => t !== tag);
+            saveTags();
+            renderSettingsTags();
+            
+            if (supabaseClient && supaConfig) {
+                supabaseClient.from('tags').delete().eq('name', tag).then(({ error }) => {
+                    if (error) console.error("Supabase tag delete failed:", error);
+                });
+            }
+        };
+
+        function renderSettingsTags() {
+            const container = document.getElementById('settingsTagsList');
+            if (!container) return;
+            
+            if (tags.length === 0) {
+                container.innerHTML = '<div class="text-muted">No tags defined.</div>';
+                return;
+            }
+            
+            container.innerHTML = tags.map(tag => `
+                <span style="background: #eef2f8; color: #1a2634; padding: 4px 10px; border-radius: 40px; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d7dfe9;">
+                    #${tag}
+                    <span onclick="deleteTag('${tag}')" style="cursor:pointer; color:#b13e3e; font-weight:bold; margin-left:2px;">✕</span>
+                </span>
+            `).join('');
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  SETTINGS: STUDENT CSV IMPORT
+        // ════════════════════════════════════════════════════════════════
+        window.importStudentCSV = function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: async function(results) {
+                    const rows = results.data;
+                    let loaded = 0;
+                    const parsedStudents = [];
+                    
+                    rows.forEach(row => {
+                        const admKey = Object.keys(row).find(k => /admission|adm/i.test(k));
+                        const nameKey = Object.keys(row).find(k => /name/i.test(k));
+                        const rollKey = Object.keys(row).find(k => /roll/i.test(k));
+                        
+                        const admissionNumber = admKey ? row[admKey].trim() : '';
+                        const name = nameKey ? row[nameKey].trim() : '';
+                        const rollNumber = rollKey ? row[rollKey].trim() : '';
+                        
+                        if (admissionNumber && name) {
+                            parsedStudents.push({ admissionNumber, name, rollNumber });
+                            loaded++;
+                        }
+                    });
+                    
+                    if (parsedStudents.length > 0) {
+                        parsedStudents.forEach(newStud => {
+                            const existingIdx = students.findIndex(s => s.admissionNumber === newStud.admissionNumber);
+                            if (existingIdx !== -1) {
+                                students[existingIdx] = newStud;
+                            } else {
+                                students.push(newStud);
+                            }
+                        });
+                        saveStudents();
+                        updateStudentCountDisplay();
+                        showToast(`Successfully imported ${loaded} students.`, 'success');
+                        
+                        if (supabaseClient && supaConfig) {
+                            try {
+                                showToast('Syncing students to Supabase...', 'info');
+                                const dbStudents = parsedStudents.map(s => ({
+                                    admission_number: s.admissionNumber,
+                                    name: s.name,
+                                    roll_number: s.rollNumber,
+                                    updated_at: new Date().toISOString()
+                                }));
+                                const { error } = await supabaseClient
+                                    .from('students')
+                                    .upsert(dbStudents);
+                                if (error) throw error;
+                                showToast('Synced to Supabase!', 'success');
+                            } catch(e) {
+                                console.error(e);
+                                showToast('Remote student sync failed.', 'error');
+                            }
+                        }
+                    } else {
+                        showToast('No valid students found. Ensure CSV headers contain Name and Admission Number.', 'error');
+                    }
+                },
+                error: function(err) {
+                    showToast('CSV parsing failed: ' + err.message, 'error');
+                }
+            });
+            event.target.value = '';
+        };
+
+        window.clearAllStudentData = function() {
+            if (!confirm('Are you sure you want to clear all student directory data?')) return;
+            students = [];
+            saveStudents();
+            updateStudentCountDisplay();
+            showToast('Student directory cleared locally.', 'info');
+            
+            if (supabaseClient && supaConfig) {
+                if (confirm('Delete students from remote Supabase table as well?')) {
+                    supabaseClient.from('students').delete().neq('admission_number', '').then(({ error }) => {
+                        if (error) {
+                            showToast('Remote student delete failed.', 'error');
+                        } else {
+                            showToast('Deleted from local & remote.', 'success');
+                        }
+                    });
+                }
+            }
+        };
+
+        function updateStudentCountDisplay() {
+            const el = document.getElementById('settingsStudentCount');
+            if (el) {
+                el.textContent = `Total Students Loaded: ${students.length}`;
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        //  EDIT TRANSACTION MODAL HANDLERS
+        // ════════════════════════════════════════════════════════════════
+        window.showEditTxModal = function(id) {
+            const tx = transactions.find(t => t.id === id);
+            if (!tx) return;
+
+            document.getElementById('editTxId').value = tx.id;
+            document.getElementById('editTxDate').value = tx.date;
+            document.getElementById('editTxRef').value = tx.reference;
+            document.getElementById('editTxParticulars').value = tx.particulars;
+            document.getElementById('editTxAmount').value = tx.amount;
+            document.getElementById('editTxBankAmount').value = tx.bankAmount;
+            document.getElementById('editTxCheques').value = tx.chequeCount;
+
+            const mainSel = document.getElementById('editTxMainCategory');
+            const subSel = document.getElementById('editTxSubCategory');
+
+            populateMainCategoryDropdown(mainSel, tx.type, tx.mainCategory || '');
+            populateSubCategoryDropdown(subSel, tx.mainCategory || '', tx.subCategory || '');
+
+            const particularsInput = document.getElementById('editTxParticulars');
+            particularsInput.dataset.tags = JSON.stringify(tx.tags || []);
+            if (tx.student) {
+                particularsInput.dataset.studentAdmission = tx.student.admissionNumber;
+                particularsInput.dataset.studentName = tx.student.name;
+                particularsInput.dataset.studentRoll = tx.student.rollNumber || '';
+            } else {
+                delete particularsInput.dataset.studentAdmission;
+                delete particularsInput.dataset.studentName;
+                delete particularsInput.dataset.studentRoll;
+            }
+
+            renderEditTxBadges();
+            document.getElementById('editTxModal').style.display = 'flex';
+        };
+
+        window.hideEditTxModal = function() {
+            document.getElementById('editTxModal').style.display = 'none';
+        };
+
+        window.saveEditedTx = function() {
+            const id = parseInt(document.getElementById('editTxId').value);
+            const date = document.getElementById('editTxDate').value;
+            const reference = document.getElementById('editTxRef').value.trim();
+            const particulars = document.getElementById('editTxParticulars').value.trim();
+            const amount = parseFloat(document.getElementById('editTxAmount').value) || 0;
+            const bankAmount = parseFloat(document.getElementById('editTxBankAmount').value) || 0;
+            const chequeCount = parseInt(document.getElementById('editTxCheques').value) || 0;
+            const mainCategory = document.getElementById('editTxMainCategory').value;
+            const subCategory = document.getElementById('editTxSubCategory').value;
+
+            if (!date || !reference || !particulars || amount === 0) {
+                showToast('Please fill in Date, Reference, Particulars, and Amount.', 'error');
+                return;
+            }
+
+            const particularsInput = document.getElementById('editTxParticulars');
+            const initialTags = particularsInput.dataset.tags ? JSON.parse(particularsInput.dataset.tags) : [];
+            let initialStudent = null;
+            if (particularsInput.dataset.studentAdmission) {
+                initialStudent = {
+                    admissionNumber: particularsInput.dataset.studentAdmission,
+                    name: particularsInput.dataset.studentName,
+                    rollNumber: particularsInput.dataset.studentRoll || ''
+                };
+            }
+
+            const { tagsList, studentObj } = extractMetadataFromParticulars(particulars, initialTags, initialStudent);
+
+            const updates = {
+                date,
+                reference,
+                particulars,
+                amount,
+                bankAmount,
+                chequeCount,
+                mainCategory,
+                subCategory,
+                tags: tagsList,
+                student: studentObj,
+                head: mainCategory || 'General'
+            };
+
+            updateTransaction(id, updates);
+            hideEditTxModal();
+            renderTransactions();
+            refreshDashboard();
+            updatePreviewCounts();
+            renderIncomeList();
+            renderExpenseList();
+            showToast('✅ Transaction updated successfully!', 'success');
+        };
+
+        // ════════════════════════════════════════════════════════════════
+        //  REVISION HISTORY TIMELINE HANDLERS
+        // ════════════════════════════════════════════════════════════════
+        window.showHistoryTxModal = function(id) {
+            const txRevs = revisions.filter(r => r.transaction_id === id)
+                                    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            
+            const container = document.getElementById('historyTxTimeline');
+            if (!container) return;
+
+            if (txRevs.length === 0) {
+                container.innerHTML = '<div class="empty-state">No revisions logged for this transaction.</div>';
+            } else {
+                container.innerHTML = txRevs.map(r => {
+                    let diffHtml = '';
+                    if (r.action === 'UPDATE' && r.old_values && r.new_values) {
+                        const changes = [];
+                        const trackKeys = ['date', 'reference', 'particulars', 'amount', 'mainCategory', 'subCategory', 'tags', 'student'];
+                        trackKeys.forEach(k => {
+                            const oldVal = JSON.stringify(r.old_values[k]);
+                            const newVal = JSON.stringify(r.new_values[k]);
+                            if (oldVal !== newVal) {
+                                let displayOld = r.old_values[k];
+                                let displayNew = r.new_values[k];
+                                if (k === 'student') {
+                                    displayOld = r.old_values[k] ? `${r.old_values[k].name} (${r.old_values[k].admissionNumber})` : 'none';
+                                    displayNew = r.new_values[k] ? `${r.new_values[k].name} (${r.new_values[k].admissionNumber})` : 'none';
+                                } else if (k === 'tags') {
+                                    displayOld = r.old_values[k] && r.old_values[k].length > 0 ? r.old_values[k].join(', ') : 'none';
+                                    displayNew = r.new_values[k] && r.new_values[k].length > 0 ? r.new_values[k].join(', ') : 'none';
+                                }
+                                changes.push(`<div><b>${k}</b>: <span style="text-decoration: line-through; color: #b13e3e;">${displayOld}</span> ➔ <span style="color: #0f7b3a; font-weight: bold;">${displayNew}</span></div>`);
+                            }
+                        });
+                        if (changes.length > 0) {
+                            diffHtml = `<div style="font-size:12px; margin-top:6px; background:#f8f9fa; padding:8px; border-radius:8px; border-left: 3px solid #1a73e8; line-height: 1.4;">${changes.join('')}</div>`;
+                        }
+                    } else if (r.action === 'CREATE') {
+                        diffHtml = `<div style="font-size:12px; margin-top:4px; color:#5e6f8a;">Created transaction with amount ₹${(r.new_values?.amount || 0).toFixed(2)}.</div>`;
+                    } else if (r.action === 'DELETE') {
+                        diffHtml = `<div style="font-size:12px; margin-top:4px; color:#b13e3e; font-weight:bold;">Transaction soft-deleted (archived).</div>`;
+                    } else if (r.action === 'RESTORE') {
+                        diffHtml = `<div style="font-size:12px; margin-top:4px; color:#0f7b3a; font-weight:bold;">Transaction restored to active list.</div>`;
+                    }
+                    
+                    let badgeCls = 'accent';
+                    if (r.action === 'CREATE') badgeCls = 'positive';
+                    if (r.action === 'DELETE') badgeCls = 'negative';
+                    if (r.action === 'RESTORE') badgeCls = 'positive';
+                    
+                    return `
+                      <div style="border-bottom: 1px solid #eef2f8; padding-bottom: 12px; margin-bottom: 4px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                          <span class="badge" style="font-size:10px; font-weight: 700; text-transform:uppercase; background:${badgeCls === 'positive' ? '#d4edda' : badgeCls === 'negative' ? '#f8dddd' : '#eef2f8'}; color:${badgeCls === 'positive' ? '#0f7b3a' : badgeCls === 'negative' ? '#b13e3e' : '#1d4b6e'}; padding: 2px 10px; border-radius: 20px;">${r.action}</span>
+                          <span style="font-size:12px; color:#5e6f8a;">${new Date(r.created_at).toLocaleString()}</span>
+                        </div>
+                        <div style="font-size:13px; margin-top:4px;">By <b>${r.created_by}</b></div>
+                        ${diffHtml}
+                      </div>
+                    `;
+                }).join('');
+            }
+            document.getElementById('historyTxModal').style.display = 'flex';
+        };
+
+        window.hideHistoryTxModal = function() {
+            document.getElementById('historyTxModal').style.display = 'none';
+        };
+
+        // ════════════════════════════════════════════════════════════════
         //  TAB SWITCHING
         // ════════════════════════════════════════════════════════════════
         function initTabs() {
@@ -2183,6 +3887,11 @@
                     if (this.dataset.tab === 'expense') renderExpenseList();
                     if (this.dataset.tab === 'transactions') renderTransactions();
                     if (this.dataset.tab === 'dashboard') refreshDashboard();
+                    if (this.dataset.tab === 'settings') {
+                        renderSettingsCategories();
+                        renderSettingsTags();
+                        updateStudentCountDisplay();
+                    }
                 });
             });
         }
@@ -2208,12 +3917,18 @@
             // Init tabs
             initTabs();
 
+            // Populate filter main category dropdown
+            populateMainCategoryDropdown(document.getElementById('txFilterMainCategory'), 'all', '');
+
             // Add initial rows
             clearIncomeRows();
             clearExpenseRows();
 
             // Render all
             renderAll();
+
+            // Update student count
+            updateStudentCountDisplay();
 
             // Auto-sync status
             updateSupabaseStatus();
