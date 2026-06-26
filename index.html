@@ -1036,7 +1036,7 @@
                 </div>
                 <div style="display:flex; flex-direction:column; gap:4px;">
                     <label style="font-size:11px; font-weight:600; color:#5e6f8a; text-transform:uppercase;">🔍 Search</label>
-                    <input type="text" id="txFilterSearch" placeholder="Particulars, @student, #tag" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;min-width:180px;font-size:13px;" />
+                    <input type="text" id="txFilterSearch" placeholder="Particulars, @student, #tag" onkeydown="if(event.key === 'Enter') renderTransactions()" style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;min-width:180px;font-size:13px;" />
                 </div>
                 <div style="display:flex; flex-direction:column; gap:4px;">
                     <label style="font-size:11px; font-weight:600; color:#5e6f8a; text-transform:uppercase;">Sort</label>
@@ -3083,7 +3083,8 @@
             const input = e.target;
             if (!input.classList.contains('inc-particulars') && 
                 !input.classList.contains('exp-particulars') && 
-                input.id !== 'editTxParticulars') {
+                input.id !== 'editTxParticulars' &&
+                input.id !== 'txFilterSearch') {
                 return;
             }
 
@@ -3129,13 +3130,19 @@
             if (!dropdown) return;
 
             if (triggerChar === '@') {
-                // filter students
-                filteredOptions = students.filter(s => 
-                    s.name.toLowerCase().includes(query) || 
-                    s.admissionNumber.toLowerCase().includes(query) ||
-                    (s.rollNumber && s.rollNumber.toLowerCase().includes(query))
-                );
-                // sort startsWith first
+                // filter students using prefix and word-start matching (like GitHub / YouTube)
+                filteredOptions = students.filter(s => {
+                    if (query === '') return true;
+                    const nameLower = s.name.toLowerCase();
+                    const admLower = s.admissionNumber.toLowerCase();
+                    const rollLower = (s.rollNumber || '').toLowerCase();
+                    
+                    const nameWords = nameLower.split(/\s+/);
+                    const nameMatches = nameWords.some(word => word.startsWith(query));
+                    
+                    return nameMatches || admLower.startsWith(query) || rollLower.startsWith(query);
+                });
+                // sort startsWith name first
                 filteredOptions.sort((a, b) => {
                     const aStart = a.name.toLowerCase().startsWith(query);
                     const bStart = b.name.toLowerCase().startsWith(query);
@@ -3145,8 +3152,11 @@
                 });
                 filteredOptions = filteredOptions.slice(0, 10);
             } else {
-                // filter tags
-                filteredOptions = tags.filter(t => t.toLowerCase().includes(query));
+                // filter tags using startsWith prefix matching
+                filteredOptions = tags.filter(t => {
+                    if (query === '') return true;
+                    return t.toLowerCase().startsWith(query);
+                });
                 filteredOptions.sort((a, b) => {
                     const aStart = a.toLowerCase().startsWith(query);
                     const bStart = b.toLowerCase().startsWith(query);
@@ -3256,6 +3266,10 @@
             }
 
             hideAutocompleteDropdown();
+
+            if (input.id === 'txFilterSearch') {
+                renderTransactions();
+            }
         }
 
         function hideAutocompleteDropdown() {
