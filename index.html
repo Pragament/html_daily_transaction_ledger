@@ -1345,19 +1345,35 @@
         }
 
         async function logout() {
-            if (!supabaseClient) return;
-            try {
-                const { error } = await supabaseClient.auth.signOut();
-                if (error) throw error;
-                showToast('Signed out successfully', 'success');
-            } catch (e) {
-                showToast('Sign out failed: ' + e.message, 'error');
-                console.error(e);
+            currentUser = null;
+            localStorage.removeItem('school_accountant_offline_session');
+            
+            const loginView = document.getElementById('loginView');
+            const dashboardView = document.getElementById('dashboardView');
+            const userProfile = document.getElementById('userProfile');
+            
+            if (dashboardView) dashboardView.style.display = 'none';
+            if (loginView) loginView.style.display = 'block';
+            if (userProfile) userProfile.style.display = 'none';
+
+            if (supabaseClient) {
+                try {
+                    const { error } = await supabaseClient.auth.signOut();
+                    if (error) throw error;
+                    showToast('Signed out successfully', 'success');
+                } catch (e) {
+                    showToast('Sign out failed: ' + e.message, 'error');
+                    console.error(e);
+                }
+            } else {
+                showToast('Logged out from offline session', 'success');
             }
         }
 
         window.bypassLoginForLocalMode = function() {
             currentUser = { email: 'offline@school.org', user_metadata: { full_name: 'Offline Accountant' } };
+            localStorage.setItem('school_accountant_offline_session', 'true');
+            
             const loginView = document.getElementById('loginView');
             const dashboardView = document.getElementById('dashboardView');
             if (loginView) loginView.style.display = 'none';
@@ -3925,8 +3941,14 @@
             // Load Supabase config
             loadSupabaseConfig();
 
-            // Check session and setup authentication
-            checkSessionAndSetupAuth();
+            // Check if there is an offline session
+            const isOffline = localStorage.getItem('school_accountant_offline_session') === 'true';
+            if (isOffline) {
+                bypassLoginForLocalMode();
+            } else {
+                // Check session and setup authentication
+                checkSessionAndSetupAuth();
+            }
 
             // Init tabs
             initTabs();
