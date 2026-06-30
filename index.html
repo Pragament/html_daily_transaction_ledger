@@ -605,22 +605,290 @@
             display: block;
             margin-bottom: 10px;
         }
+
+        /* ───────────── LOGIN PAGE ───────────── */
+        .login-container {
+            max-width: 420px;
+            width: 100%;
+            margin: 80px auto;
+            padding: 40px 32px;
+            background: #ffffff;
+            border-radius: 24px;
+            box-shadow: 0 10px 40px rgba(0, 20, 40, 0.05), 0 1px 3px rgba(0, 0, 0, 0.01);
+            border: 1px solid #e9edf4;
+            text-align: center;
+            animation: loginFadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes loginFadeUp {
+            0% {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .login-icon {
+            font-size: 56px;
+            margin-bottom: 20px;
+            display: inline-block;
+            filter: drop-shadow(0 4px 10px rgba(0,0,0,0.1));
+            animation: bounceIcon 2s infinite ease-in-out;
+        }
+        @keyframes bounceIcon {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+        }
+        .login-title {
+            font-size: 28px;
+            font-weight: 800;
+            color: #0b2a4a;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, #0b2a4a 0%, #1d4b6e 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .login-subtitle {
+            font-size: 15px;
+            color: #5e6f8a;
+            font-weight: 500;
+            margin-bottom: 28px;
+        }
+        .login-divider {
+            height: 1px;
+            background: #e9edf4;
+            margin: 28px 0;
+        }
+        .login-prompt {
+            font-size: 14px;
+            color: #3d5068;
+            margin-bottom: 20px;
+            font-weight: 600;
+            letter-spacing: 0.1px;
+        }
+        .google-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            width: 100%;
+            padding: 14px 24px;
+            border: 1.5px solid #d7dfe9;
+            background: #fff;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 15px;
+            color: #1a2634;
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        }
+        .google-btn:hover {
+            background: #fafbfe;
+            border-color: #b0c0d4;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(29, 75, 110, 0.08);
+        }
+        .google-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        }
+        
+        /* ───────────── USER PROFILE IN HEADER ───────────── */
+        .user-profile {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: #f0f4fa;
+            padding: 4px 14px;
+            border-radius: 40px;
+            border: 1px solid #d7dfe9;
+            transition: all 0.2s ease;
+        }
+        .user-profile:hover {
+            border-color: #b0c0d4;
+            background: #e6edf7;
+        }
+        .user-avatar {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 1.5px solid #fff;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+        .user-info {
+            display: flex;
+            flex-direction: column;
+            text-align: left;
+            line-height: 1.25;
+        }
+        .user-name {
+            font-size: 13px;
+            font-weight: 700;
+            color: #0b2a4a;
+        }
+        .user-email {
+            font-size: 10px;
+            color: #5e6f8a;
+            font-weight: 500;
+        }
+        .logout-btn {
+            margin-left: 4px;
+            background: #b13e3e;
+            color: #fff;
+            border: none;
+            border-radius: 30px;
+            padding: 4px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .logout-btn:hover {
+            background: #c94a4a;
+            transform: translateY(-1px);
+        }
+        .logout-btn:active {
+            transform: translateY(0);
+        }
+
+        /* ───────────── SETTINGS MODAL ───────────── */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(11, 42, 74, 0.4);
+            backdrop-filter: blur(4px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 16px;
+            animation: fadeIn 0.25s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .modal-content {
+            background: #fff;
+            border-radius: 24px;
+            width: 100%;
+            max-width: 500px;
+            box-shadow: 0 20px 50px rgba(0, 20, 40, 0.2);
+            border: 1px solid #e9edf4;
+            padding: 28px;
+            position: relative;
+            animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            max-height: 90vh;
+            overflow-y: auto;
+            text-align: left;
+        }
+        @keyframes slideUp {
+            from { transform: translateY(30px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .modal-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: #f0f4fa;
+            border: none;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: #5e6f8a;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.2s ease;
+        }
+        .modal-close:hover {
+            background: #e6edf7;
+            color: #b13e3e;
+            transform: scale(1.05);
+        }
+        .modal-header {
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e9edf4;
+            padding-bottom: 12px;
+        }
+        .modal-header h3 {
+            font-size: 18px;
+            font-weight: 700;
+            color: #0b2a4a;
+            margin: 0;
+        }
     </style>
 </head>
 <body>
 
     <div id="app">
-        <!-- ─── HEADER ─── -->
-        <header class="app-header">
-            <div>
-                <h1>📘 School Accountant</h1>
-                <span class="sub">Income &amp; Expense Manager</span>
+        <!-- ─── LOGIN VIEW ─── -->
+        <div id="loginView" style="display: none; position: relative;">
+            <!-- Settings button in top-right corner of Login page -->
+            <button id="loginSettingsBtn" onclick="showLoginSettings()" style="position: absolute; top: 16px; right: 16px; background: #fff; border: 1.5px solid #d7dfe9; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s ease; color: #3d5068; z-index: 10; display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">⚙️ Settings</button>
+
+            <!-- Main Login Card -->
+            <div class="login-container" id="loginCard">
+                <span class="login-icon">📘</span>
+                <h2 class="login-title">School Accountant</h2>
+                <p class="login-subtitle">Income &amp; Expense Manager</p>
+                <div class="login-divider"></div>
+                <p class="login-prompt">Please sign in to continue</p>
+                <button class="google-btn" id="loginGoogleBtn" onclick="loginWithGoogle()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
+                        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
+                    </svg>
+                    <span>Continue with Google</span>
+                </button>
             </div>
-            <div class="header-actions">
-                <span class="badge" id="localStatus">💾 Local</span>
-                <span class="badge" id="supaStatus">☁️ Disconnected</span>
+
+            <!-- Settings Modal (Overlay) -->
+            <div id="loginSettingsOverlay" class="modal-overlay" onclick="closeModalOnOutsideClick(event)">
+                <div class="modal-content">
+                    <button class="modal-close" onclick="hideLoginSettings()">✕</button>
+                    <div class="modal-header">
+                        <h3>⚙️ Connection Settings</h3>
+                    </div>
+                    <div id="loginSettingsPlaceholder"></div>
+                </div>
             </div>
-        </header>
+        </div>
+
+        <!-- ─── DASHBOARD VIEW ─── -->
+        <div id="dashboardView" style="display: none;">
+            <!-- ─── HEADER ─── -->
+            <header class="app-header">
+                <div>
+                    <h1>📘 School Accountant</h1>
+                    <span class="sub">Income &amp; Expense Manager</span>
+                </div>
+                <div class="header-actions">
+                    <!-- User Profile Widget -->
+                    <div class="user-profile" id="userProfile" style="display: none;">
+                        <img id="userAvatar" class="user-avatar" src="" alt="Avatar" />
+                        <div class="user-info">
+                            <span id="userName" class="user-name"></span>
+                            <span id="userEmail" class="user-email"></span>
+                        </div>
+                        <button class="logout-btn" onclick="logout()">Logout</button>
+                    </div>
+                    <span class="badge" id="localStatus">💾 Local</span>
+                    <span class="badge" id="supaStatus">☁️ Disconnected</span>
+                </div>
+            </header>
 
         <!-- ─── TABS ─── -->
         <nav class="tabs" id="tabNav">
@@ -758,7 +1026,7 @@
         <section class="tab-content" id="tab-settings">
             <div class="section-title">⚙️ Settings</div>
 
-            <div class="settings-group">
+            <div class="settings-group" id="supaConfigGroup">
                 <h3>☁️ Supabase Configuration</h3>
                 <div class="field">
                     <label>Supabase URL</label>
@@ -811,6 +1079,7 @@
                 <p class="text-muted text-sm">School Accountant v1.0 — Data stored locally in your browser. Sync to Supabase for cloud backup &amp; sharing.</p>
             </div>
         </section>
+        </div>
 
         <!-- ─── TOAST ─── -->
         <div id="toast" class="toast"></div>
@@ -828,6 +1097,141 @@
         // ─── Supabase client ───
         let supabaseClient = null;
         let supaConfig = null;
+
+        // ─── Authentication Functions ───
+        function showLoginSettings() {
+            const overlay = document.getElementById('loginSettingsOverlay');
+            const placeholder = document.getElementById('loginSettingsPlaceholder');
+            const configGroup = document.getElementById('supaConfigGroup');
+
+            if (overlay) {
+                overlay.style.display = 'flex';
+            }
+            if (placeholder && configGroup) {
+                placeholder.appendChild(configGroup);
+            }
+        }
+
+        function hideLoginSettings() {
+            const overlay = document.getElementById('loginSettingsOverlay');
+            const configGroup = document.getElementById('supaConfigGroup');
+            const settingsTab = document.getElementById('tab-settings');
+
+            if (overlay) {
+                overlay.style.display = 'none';
+            }
+            if (settingsTab && configGroup) {
+                // Insert supaConfigGroup as the second element (after section-title)
+                settingsTab.insertBefore(configGroup, settingsTab.children[1]);
+            }
+        }
+
+        function closeModalOnOutsideClick(event) {
+            if (event.target.id === 'loginSettingsOverlay') {
+                hideLoginSettings();
+            }
+        }
+
+        async function loginWithGoogle() {
+            if (!supabaseClient) {
+                showToast('Supabase is not configured. Please configure it first.', 'error');
+                showLoginSettings();
+                return;
+            }
+            try {
+                const { error } = await supabaseClient.auth.signInWithOAuth({
+                    provider: 'google',
+                    options: {
+                        redirectTo: window.location.origin + window.location.pathname
+                    }
+                });
+                if (error) throw error;
+            } catch (e) {
+                showToast('Google Sign-In failed: ' + e.message, 'error');
+                console.error(e);
+            }
+        }
+
+        async function logout() {
+            if (!supabaseClient) return;
+            try {
+                const { error } = await supabaseClient.auth.signOut();
+                if (error) throw error;
+                showToast('Signed out successfully', 'success');
+            } catch (e) {
+                showToast('Sign out failed: ' + e.message, 'error');
+                console.error(e);
+            }
+        }
+
+        function handleAuthStateChange(event, session) {
+            console.log('Auth state change:', event, session);
+            const loginView = document.getElementById('loginView');
+            const dashboardView = document.getElementById('dashboardView');
+            const userProfile = document.getElementById('userProfile');
+
+            if (session && session.user) {
+                if (loginView) loginView.style.display = 'none';
+                if (dashboardView) dashboardView.style.display = 'block';
+
+                if (userProfile) {
+                    userProfile.style.display = 'inline-flex';
+                }
+
+                const user = session.user;
+                const metadata = user.user_metadata || {};
+
+                const avatarEl = document.getElementById('userAvatar');
+                if (avatarEl) {
+                    avatarEl.src = metadata.avatar_url || 'https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y';
+                }
+
+                const nameEl = document.getElementById('userName');
+                if (nameEl) {
+                    nameEl.textContent = metadata.full_name || user.email.split('@')[0];
+                }
+
+                const emailEl = document.getElementById('userEmail');
+                if (emailEl) {
+                    emailEl.textContent = user.email;
+                }
+            } else {
+                if (dashboardView) dashboardView.style.display = 'none';
+                if (loginView) loginView.style.display = 'block';
+
+                if (userProfile) {
+                    userProfile.style.display = 'none';
+                }
+            }
+        }
+
+        async function checkSessionAndSetupAuth() {
+            const loginView = document.getElementById('loginView');
+            const dashboardView = document.getElementById('dashboardView');
+
+            if (!supabaseClient) {
+                if (loginView) loginView.style.display = 'block';
+                if (dashboardView) dashboardView.style.display = 'none';
+                return;
+            }
+
+            try {
+                // Set up listener
+                supabaseClient.auth.onAuthStateChange((event, session) => {
+                    handleAuthStateChange(event, session);
+                });
+
+                // Check initial session
+                const { data: { session }, error } = await supabaseClient.auth.getSession();
+                if (error) throw error;
+
+                handleAuthStateChange(session ? 'SIGNED_IN' : 'SIGNED_OUT', session);
+            } catch (e) {
+                console.error('Session check failed:', e);
+                showToast('Authentication error: ' + e.message, 'error');
+                handleAuthStateChange('SIGNED_OUT', null);
+            }
+        }
 
         // ─── DOM refs ───
         const $ = (s) => document.querySelector(s);
@@ -1490,6 +1894,16 @@
             initSupabase();
             updateSupabaseStatus();
             showToast('✅ Supabase config saved!', 'success');
+
+            // Handle transition back to login page if we are in login settings view
+            const overlay = document.getElementById('loginSettingsOverlay');
+            if (overlay && overlay.style.display === 'flex') {
+                hideLoginSettings();
+                // If client successfully initialized, verify session
+                if (supabaseClient) {
+                    checkSessionAndSetupAuth();
+                }
+            }
         }
 
         function clearSupabaseConfig() {
@@ -1787,6 +2201,9 @@
 
             // Load Supabase config
             loadSupabaseConfig();
+
+            // Check session and setup authentication
+            checkSessionAndSetupAuth();
 
             // Init tabs
             initTabs();
