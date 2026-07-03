@@ -2512,8 +2512,8 @@
                 tr.innerHTML = `
                     <td>${localTimeStr}</td>
                     <td style="font-weight: 600;">${act.activityType}</td>
-                    <td>${act.userName} <br/><small class="text-muted">${act.userEmail}</small></td>
-                    <td>${act.description}</td>
+                    <td>${escapeHtml(act.userName)} <br/><small class="text-muted">${escapeHtml(act.userEmail)}</small></td>
+                    <td>${escapeHtml(act.description)}</td>
                     <td><span class="badge" style="background: ${devColorBg}; color: ${devColorTxt}; padding: 2px 8px; border-radius: 12px; font-size: 11px; display: inline-block;">${act.deviceStatus}</span></td>
                     <td><span class="badge" style="background: ${syncColorBg}; color: ${syncColorTxt}; padding: 2px 8px; border-radius: 12px; font-size: 11px; display: inline-block;">${act.syncStatus}</span></td>
                 `;
@@ -2541,12 +2541,12 @@
                     <div><strong>Timestamp:</strong> ${localTimeStr}</div>
                     <div><strong>Date / Time:</strong> ${act.date} / ${act.time}</div>
                     <div><strong>Activity Type:</strong> <span style="font-weight:600; color:#1d4b6e;">${act.activityType}</span></div>
-                    <div><strong>Description:</strong> <span style="color:#2c3e50; font-weight:500;">${act.description}</span></div>
+                    <div><strong>Description:</strong> <span style="color:#2c3e50; font-weight:500;">${escapeHtml(act.description)}</span></div>
                     <div><strong>Transaction ID:</strong> ${act.transactionId !== null ? `<span style="background:#eef2f8; padding:2px 6px; border-radius:4px; font-family:monospace;">${act.transactionId}</span>` : 'N/A'}</div>
                     <hr style="border: 0; border-top: 1px solid #e9edf4; margin: 8px 0;"/>
-                    <div><strong>User Name:</strong> ${act.userName}</div>
-                    <div><strong>User Email:</strong> ${act.userEmail}</div>
-                    <div><strong>Firebase UID:</strong> <span style="font-family:monospace; font-size:12px; color:#555;">${act.firebaseUid || 'N/A'}</span></div>
+                    <div><strong>User Name:</strong> ${escapeHtml(act.userName)}</div>
+                    <div><strong>User Email:</strong> ${escapeHtml(act.userEmail)}</div>
+                    <div><strong>Firebase UID:</strong> <span style="font-family:monospace; font-size:12px; color:#555;">${escapeHtml(act.firebaseUid || 'N/A')}</span></div>
                     <hr style="border: 0; border-top: 1px solid #e9edf4; margin: 8px 0;"/>
                     <div style="display:flex; gap:12px; align-items:center;">
                         options: <strong>Device Status:</strong>
@@ -3888,21 +3888,21 @@
                 const categoryLabel = t.subCategory ? `${t.mainCategory} ➔ ${t.subCategory}` : t.mainCategory;
                 let tagsHtml = '';
                 if (t.tags && t.tags.length > 0) {
-                    tagsHtml = t.tags.map(tag => `<span style="background: #f1f3f4; color: #5e6f8a; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">#${tag}</span>`).join('');
+                    tagsHtml = t.tags.map(tag => `<span style="background: #f1f3f4; color: #5e6f8a; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">#${escapeHtml(tag)}</span>`).join('');
                 }
-                let studentHtml = t.student ? `<span style="background: #e8f0fe; color: #1a73e8; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">👤 ${t.student.name}</span>` : '';
+                let studentHtml = t.student ? `<span style="background: #e8f0fe; color: #1a73e8; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">👤 ${escapeHtml(t.student.name)}</span>` : '';
 
                 return `
                 <div class="tx-item">
                   <span class="tx-type income">Income</span>
                   <span class="tx-date">${t.date}</span>
                   <span class="tx-particulars" style="flex: 2 1 180px;">
-                      ${t.reference} — ${t.particulars}
+                      ${escapeHtml(t.reference)} — ${escapeHtml(t.particulars)}
                       ${studentHtml}
                       ${tagsHtml}
                   </span>
                   <span class="tx-amount income">+₹${t.amount.toFixed(2)}</span>
-                  <span class="tx-head">${categoryLabel}</span>
+                  <span class="tx-head">${escapeHtml(categoryLabel)}</span>
                   ${t.attachments && t.attachments.length > 0 ? `<span class="tx-attach">📎${t.attachments.length}</span>` : ''}
                   <div class="tx-actions">
                     <button class="btn btn-danger btn-xs" onclick="deleteTransaction(${t.id});renderIncomeList();renderTransactions();refreshDashboard();updatePreviewCounts();">Delete</button>
@@ -4086,21 +4086,21 @@
                 const categoryLabel = t.subCategory ? `${t.mainCategory} ➔ ${t.subCategory}` : t.mainCategory;
                 let tagsHtml = '';
                 if (t.tags && t.tags.length > 0) {
-                    tagsHtml = t.tags.map(tag => `<span style="background: #f1f3f4; color: #5e6f8a; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">#${tag}</span>`).join('');
+                    tagsHtml = t.tags.map(tag => `<span style="background: #f1f3f4; color: #5e6f8a; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">#${escapeHtml(tag)}</span>`).join('');
                 }
-                let studentHtml = t.student ? `<span style="background: #e8f0fe; color: #1a73e8; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">👤 ${t.student.name}</span>` : '';
+                let studentHtml = t.student ? `<span style="background: #e8f0fe; color: #1a73e8; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">👤 ${escapeHtml(t.student.name)}</span>` : '';
 
                 return `
                 <div class="tx-item">
                   <span class="tx-type expense">Expense</span>
                   <span class="tx-date">${t.date}</span>
                   <span class="tx-particulars" style="flex: 2 1 180px;">
-                      ${t.reference} — ${t.particulars}
+                      ${escapeHtml(t.reference)} — ${escapeHtml(t.particulars)}
                       ${studentHtml}
                       ${tagsHtml}
                   </span>
                   <span class="tx-amount expense">-₹${t.amount.toFixed(2)}</span>
-                  <span class="tx-head">${categoryLabel}</span>
+                  <span class="tx-head">${escapeHtml(categoryLabel)}</span>
                   ${t.attachments && t.attachments.length > 0 ? `<span class="tx-attach">📎${t.attachments.length}</span>` : ''}
                   <div class="tx-actions">
                     <button class="btn btn-danger btn-xs" onclick="deleteTransaction(${t.id});renderExpenseList();renderTransactions();refreshDashboard();updatePreviewCounts();">Delete</button>
@@ -4148,7 +4148,7 @@
                 let tagsHtml = '';
                 if (t.tags && t.tags.length > 0) {
                     tagsHtml = t.tags.map(tag => `
-                        <span style="background: #f1f3f4; color: #5e6f8a; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px;">#${tag}</span>
+                        <span style="background: #f1f3f4; color: #5e6f8a; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px;">#${escapeHtml(tag)}</span>
                     `).join('');
                 }
 
@@ -4157,7 +4157,7 @@
                 if (t.student) {
                     studentHtml = `
                         <span style="background: #e8f0fe; color: #1a73e8; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px;">
-                            👤 ${t.student.name} (${t.student.admissionNumber})
+                            👤 ${escapeHtml(t.student.name)} (${escapeHtml(t.student.admissionNumber)})
                         </span>
                     `;
                 }
@@ -4170,9 +4170,9 @@
 
                 let auditHtml = `
                     <div style="font-size: 11px; color: #7f8c8d; margin-top: 4px;">
-                        Created by <b>${creator}</b> on ${createdTime}
-                        ${updater !== creator || updatedTime !== createdTime ? ` | Last updated by <b>${updater}</b> on ${updatedTime}` : ''}
-                        ${t.isDeleted ? ` | <span style="color:#b13e3e; font-weight:bold;">Archived (Deleted) by ${t.deletedBy || 'unknown'}</span>` : ''}
+                        Created by <b>${escapeHtml(creator)}</b> on ${createdTime}
+                        ${updater !== creator || updatedTime !== createdTime ? ` | Last updated by <b>${escapeHtml(updater)}</b> on ${updatedTime}` : ''}
+                        ${t.isDeleted ? ` | <span style="color:#b13e3e; font-weight:bold;">Archived (Deleted) by ${escapeHtml(t.deletedBy || 'unknown')}</span>` : ''}
                     </div>
                 `;
 
@@ -4187,7 +4187,7 @@
                 <span class="tx-type ${cls}">${isIncome ? 'Income' : 'Expense'}</span>
                 <span class="tx-date">${t.date}</span>
                 <div class="tx-particulars" style="display:flex; flex-direction:column; gap:4px; flex: 2 1 180px;">
-                    <div>${t.reference} — ${t.particulars}</div>
+                    <div>${escapeHtml(t.reference)} — ${escapeHtml(t.particulars)}</div>
                     <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
                         ${studentHtml}
                         ${tagsHtml}
@@ -4195,7 +4195,7 @@
                     ${auditHtml}
                 </div>
                 <span class="tx-amount ${cls}">${sign}₹${t.amount.toFixed(2)}</span>
-                <span class="tx-head" style="font-weight:600; font-size:12px; max-width:180px; text-overflow:ellipsis; overflow:hidden;">${categoryLabel}</span>
+                <span class="tx-head" style="font-weight:600; font-size:12px; max-width:180px; text-overflow:ellipsis; overflow:hidden;">${escapeHtml(categoryLabel)}</span>
                 ${attachInfo}
                 <div class="tx-actions" style="display:flex; gap:4px; align-items:center; margin-left:auto;">
                   ${t.isDeleted ? `
@@ -4351,7 +4351,7 @@
             const type = (attach.type || '').toLowerCase();
             const allowedViewTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'application/pdf'];
             const isSupported = allowedViewTypes.some(t => type.startsWith(t)) || 
-                                /\.(pdf|png|jpe?g|webp)$/i.test(attach.name);
+                                 /\.(pdf|png|jpe?g|webp)$/i.test(attach.name);
 
             if (!isSupported) {
                 showToast("Viewing not supported for this file type. Please download instead.", "info");
@@ -4362,6 +4362,15 @@
                 if (attach.data && attach.data.startsWith('data:')) {
                     const blob = await dataURLtoBlob(attach.data);
                     const blobUrl = URL.createObjectURL(blob);
+                    window.open(blobUrl, '_blank');
+                } else if (supabaseClient && supaConfig && (attach.storagePath || attach.url)) {
+                    const path = attach.storagePath || attach.url.split(`/${supaConfig.bucket}/`)[1];
+                    showToast("⏳ Fetching file preview from storage...", "info");
+                    const { data, error } = await supabaseClient.storage
+                        .from(supaConfig.bucket)
+                        .download(path);
+                    if (error) throw error;
+                    const blobUrl = URL.createObjectURL(data);
                     window.open(blobUrl, '_blank');
                 } else if (attach.url) {
                     window.open(attach.url, '_blank');
@@ -4380,12 +4389,41 @@
             const attach = tx.attachments.find(a => a.name === attachName);
             if (!attach) return;
 
-            const urlOrData = attach.data || attach.url;
-            if (!urlOrData) {
-                showToast("Failed to download: file source missing.", "error");
-                return;
+            try {
+                if (attach.data && attach.data.startsWith('data:')) {
+                    const blob = await dataURLtoBlob(attach.data);
+                    const blobUrl = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = blobUrl;
+                    a.download = attach.name;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(blobUrl);
+                } else if (supabaseClient && supaConfig && (attach.storagePath || attach.url)) {
+                    const path = attach.storagePath || attach.url.split(`/${supaConfig.bucket}/`)[1];
+                    showToast("⏳ Downloading file from storage...", "info");
+                    const { data, error } = await supabaseClient.storage
+                        .from(supaConfig.bucket)
+                        .download(path);
+                    if (error) throw error;
+                    const blobUrl = URL.createObjectURL(data);
+                    const a = document.createElement('a');
+                    a.href = blobUrl;
+                    a.download = attach.name;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(blobUrl);
+                } else if (attach.url) {
+                    await downloadFileFromUrlOrData(attach.url, attach.name);
+                } else {
+                    showToast("Failed to download: file source missing.", "error");
+                }
+            } catch (e) {
+                console.error("Download failed:", e);
+                showToast("Failed to download attachment.", "error");
             }
-            await downloadFileFromUrlOrData(urlOrData, attach.name);
         };
 
         window.removeAttachmentFile = async function(txId, attachName) {
@@ -5239,7 +5277,7 @@
                 const subs = categories.filter(c => c.parent_id === parent.id);
                 const subsHtml = subs.map(sub => `
                     <div style="margin-left: 20px; display: flex; align-items: center; gap: 8px; padding: 2px 0;">
-                        <span>↳ ${sub.name}</span>
+                        <span>↳ ${escapeHtml(sub.name)}</span>
                         <button class="btn btn-danger btn-xs" style="padding: 0px 4px; font-size: 9px;" onclick="deleteCategory(${sub.id})">✕</button>
                     </div>
                 `).join('');
@@ -5247,7 +5285,7 @@
                 return `
                     <div style="background:#f9fbfe; padding:8px 12px; border-radius:8px; border: 1px solid #e6ecf3; margin-bottom: 8px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; font-weight:600; color:#0b2a4a;">
-                            <span>📁 ${parent.name}</span>
+                            <span>📁 ${escapeHtml(parent.name)}</span>
                             <div style="display:flex; gap:4px;">
                                 <button class="btn btn-primary btn-xs" style="font-size:10px; padding:1px 6px;" onclick="addSubCategoryPrompt(${parent.id})">+ Add Sub</button>
                                 <button class="btn btn-danger btn-xs" style="font-size:10px; padding:1px 6px;" onclick="deleteCategory(${parent.id})">✕</button>
@@ -5304,8 +5342,8 @@
 
             container.innerHTML = tags.map(tag => `
                 <span style="background: #eef2f8; color: #1a2634; padding: 4px 10px; border-radius: 40px; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d7dfe9;">
-                    #${tag}
-                    <span onclick="deleteTag('${tag}')" style="cursor:pointer; color:#b13e3e; font-weight:bold; margin-left:2px;">✕</span>
+                    #${escapeHtml(tag)}
+                    <span onclick="deleteTag('${escapeHtml(tag)}')" style="cursor:pointer; color:#b13e3e; font-weight:bold; margin-left:2px;">✕</span>
                 </span>
             `).join('');
         }
@@ -5959,14 +5997,17 @@
                             const oldVal = JSON.stringify(r.old_values[k]);
                             const newVal = JSON.stringify(r.new_values[k]);
                             if (oldVal !== newVal) {
-                                let displayOld = r.old_values[k];
-                                let displayNew = r.new_values[k];
+                                let displayOld = '';
+                                let displayNew = '';
                                 if (k === 'student') {
-                                    displayOld = r.old_values[k] ? `${r.old_values[k].name} (${r.old_values[k].admissionNumber})` : 'none';
-                                    displayNew = r.new_values[k] ? `${r.new_values[k].name} (${r.new_values[k].admissionNumber})` : 'none';
+                                    displayOld = r.old_values[k] ? `${escapeHtml(r.old_values[k].name)} (${escapeHtml(r.old_values[k].admissionNumber)})` : 'none';
+                                    displayNew = r.new_values[k] ? `${escapeHtml(r.new_values[k].name)} (${escapeHtml(r.new_values[k].admissionNumber)})` : 'none';
                                 } else if (k === 'tags') {
-                                    displayOld = r.old_values[k] && r.old_values[k].length > 0 ? r.old_values[k].join(', ') : 'none';
-                                    displayNew = r.new_values[k] && r.new_values[k].length > 0 ? r.new_values[k].join(', ') : 'none';
+                                    displayOld = r.old_values[k] && r.old_values[k].length > 0 ? r.old_values[k].map(escapeHtml).join(', ') : 'none';
+                                    displayNew = r.new_values[k] && r.new_values[k].length > 0 ? r.new_values[k].map(escapeHtml).join(', ') : 'none';
+                                } else {
+                                    displayOld = r.old_values[k] !== undefined && r.old_values[k] !== null ? escapeHtml(String(r.old_values[k])) : 'none';
+                                    displayNew = r.new_values[k] !== undefined && r.new_values[k] !== null ? escapeHtml(String(r.new_values[k])) : 'none';
                                 }
                                 changes.push(`<div><b>${k}</b>: <span style="text-decoration: line-through; color: #b13e3e;">${displayOld}</span> ➔ <span style="color: #0f7b3a; font-weight: bold;">${displayNew}</span></div>`);
                             }
@@ -5993,7 +6034,7 @@
                           <span class="badge" style="font-size:10px; font-weight: 700; text-transform:uppercase; background:${badgeCls === 'positive' ? '#d4edda' : badgeCls === 'negative' ? '#f8dddd' : '#eef2f8'}; color:${badgeCls === 'positive' ? '#0f7b3a' : badgeCls === 'negative' ? '#b13e3e' : '#1d4b6e'}; padding: 2px 10px; border-radius: 20px;">${r.action}</span>
                           <span style="font-size:12px; color:#5e6f8a;">${new Date(r.created_at).toLocaleString()}</span>
                         </div>
-                        <div style="font-size:13px; margin-top:4px;">By <b>${r.created_by}</b></div>
+                        <div style="font-size:13px; margin-top:4px;">By <b>${escapeHtml(r.created_by)}</b></div>
                         ${diffHtml}
                       </div>
                     `;
