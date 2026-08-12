@@ -1,0 +1,3 @@
+admission_no,student_name,class,section,Tuition Fee,Tuition Fee Remarks,Transport Fee,Transport Fee Remarks
+101,John Doe,10,A,60000,,15000,Sibling discount
+102,Jane Smith,10,A,45000,Scholarship,,Exempt
