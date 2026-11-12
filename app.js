@@ -257,6 +257,11 @@
 
             currentUser = null;
             userProfileData = null;
+            window.currentFacultyList = [];
+            try {
+                localStorage.removeItem('school_accountant_faculty');
+                localStorage.removeItem('school_accountant_faculty_payments');
+            } catch (e) {}
 
             const loginView = document.getElementById('loginView');
             const dashboardView = document.getElementById('dashboardView');
@@ -548,6 +553,28 @@
                     console.warn("Could not sync fee payments metadata from Supabase:", paymentErr);
                 }
 
+                // 4.95. Fetch faculty expense payments
+                try {
+                    const { data: remoteFacultyPayments, error: fPayErr } = await supabaseClient
+                        .from('faculty_expense_payments')
+                        .select('*');
+                    if (!fPayErr && remoteFacultyPayments) {
+                        try {
+                            const rawLocal = localStorage.getItem('school_accountant_faculty_payments');
+                            const localPays = rawLocal ? JSON.parse(rawLocal) : [];
+                            const merged = [...remoteFacultyPayments];
+                            localPays.forEach(lp => {
+                                if (!merged.some(m => (m.id && m.id === lp.id) || (m.voucher_number && lp.voucher_number && m.voucher_number === lp.voucher_number))) {
+                                    merged.push(lp);
+                                }
+                            });
+                            localStorage.setItem('school_accountant_faculty_payments', JSON.stringify(merged));
+                        } catch (mErr) {}
+                    }
+                } catch (fPayErr) {
+                    console.warn("Could not sync faculty expense payments from Supabase:", fPayErr);
+                }
+
                 // 5. Fetch transactions
                 const { data: remoteTxs, error: txErr } = await supabaseClient
                     .from(supaConfig.table)
@@ -556,6 +583,7 @@
                 if (txErr) throw txErr;
 
                 if (remoteTxs) {
+                    const currentFacultyData = getLocalFacultyData();
                     remoteTxs.forEach(rt => {
                         const localIdx = transactions.findIndex(lt => lt.id === rt.id);
                         const mappedTx = {
@@ -588,6 +616,9 @@
                             mappedTx.feeMonth = paymentMeta.fee_month;
                         }
 
+                        // Stitch faculty metadata back in-memory from faculty payments & directory
+                        stitchSingleTransactionFaculty(mappedTx, currentFacultyData);
+
                         if (localIdx === -1) {
                             transactions.push(mappedTx);
                         } else {
@@ -609,16 +640,23 @@
                         }
                     });
 
+                    stitchFacultyToTransactions();
+
                     if (transactions.length > 0) {
                         nextId = Math.max(...transactions.map(t => t.id)) + 1;
                     }
                     saveData();
                 }
 
-                // 6. Sync faculty data
-                if (window.DataService && typeof window.DataService.getFaculty === 'function') {
+                // 6. Sync faculty data and salary payments
+                if (window.DataService) {
                     try {
-                        await window.DataService.getFaculty();
+                        if (typeof window.DataService.getFaculty === 'function') {
+                            await window.DataService.getFaculty();
+                        }
+                        if (typeof window.DataService.getAllFacultyPayments === 'function') {
+                            await window.DataService.getAllFacultyPayments();
+                        }
                         if (typeof window.loadFaculty === 'function') {
                             await window.loadFaculty();
                         }
@@ -626,6 +664,9 @@
                         console.warn("Could not sync faculty from Supabase:", facSyncErr);
                     }
                 }
+
+                // Re-stitch transactions with freshly loaded faculty and payment records
+                stitchFacultyToTransactions();
 
                 showToast('✅ Synced with Supabase!', 'success');
                 renderAll();
@@ -647,6 +688,25 @@
                 window.currentUser = session.user;
                 if (loginView) loginView.style.display = 'none';
                 if (dashboardView) dashboardView.style.display = 'block';
+
+                const isOfflineMode = session && session.user && session.user.email === 'admin@school.local';
+                let offlineBanner = document.getElementById('offlineModeBanner');
+                if (!offlineBanner && isOfflineMode) {
+                    offlineBanner = document.createElement('div');
+                    offlineBanner.id = 'offlineModeBanner';
+                    offlineBanner.style.cssText = [
+                        'background:#f59e0b', 'color:#1c1917', 'padding:8px 16px',
+                        'text-align:center', 'font-weight:600', 'font-size:13px',
+                        'border-radius:8px', 'margin-bottom:12px'
+                    ].join(';');
+                    offlineBanner.textContent = '⚠️ Offline Mode: Data saved locally only. Sign in to sync with Supabase.';
+                    if (dashboardView && dashboardView.firstChild) {
+                        dashboardView.insertBefore(offlineBanner, dashboardView.firstChild);
+                    }
+                }
+                if (offlineBanner) {
+                    offlineBanner.style.display = isOfflineMode ? 'block' : 'none';
+                }
 
                 if (userProfile) {
                     userProfile.style.display = 'inline-flex';
@@ -671,9 +731,30 @@
                 }
 
                 checkUserProfile(user, wasSignedOut);
+
+                // Fetch fresh faculty and payments for the logged-in user in background
+                if (window.DataService && typeof window.DataService.getFaculty === 'function') {
+                    window.DataService.getFaculty().then(() => {
+                        if (typeof window.DataService.getAllFacultyPayments === 'function') {
+                            return window.DataService.getAllFacultyPayments();
+                        }
+                    }).then(() => {
+                        stitchFacultyToTransactions();
+                        renderTransactions();
+                        renderExpenseList();
+                        if (typeof window.updateDashboardFacultyMetrics === 'function') {
+                            window.updateDashboardFacultyMetrics();
+                        }
+                        if (typeof window.loadFaculty === 'function') {
+                            window.loadFaculty();
+                        }
+                    }).catch(err => console.warn("Background faculty init on login:", err));
+                }
             } else {
                 currentUser = null;
                 userProfileData = null;
+                const offlineBanner = document.getElementById('offlineModeBanner');
+                if (offlineBanner) offlineBanner.style.display = 'none';
                 if (dashboardView) dashboardView.style.display = 'none';
                 if (loginView) loginView.style.display = 'block';
 
@@ -1001,7 +1082,7 @@
                     <div><strong>User ID:</strong> <span style="font-family:monospace; font-size:12px; color:#555;">${escapeHtml(act.userId || 'N/A')}</span></div>
                     <hr style="border: 0; border-top: 1px solid #e9edf4; margin: 8px 0;"/>
                     <div style="display:flex; gap:12px; align-items:center;">
-                        options: <strong>Device Status:</strong>
+                        <strong>Device Status:</strong>
                         <span style="background: ${act.deviceStatus === 'Online' ? '#d4edda' : '#f8d7da'}; color: ${act.deviceStatus === 'Online' ? '#0f7b3a' : '#721c24'}; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600;">${act.deviceStatus}</span>
                     </div>
                     <div style="display:flex; gap:12px; align-items:center; margin-top:4px;">
@@ -1294,13 +1375,38 @@
                         userProfileData.fullName = data.full_name;
                         if (nameEl) nameEl.textContent = data.full_name;
                     }
+
+                    // Auto-ensure public.users and public.app_access for consistent multi-user permissions
+                    if (user.email !== 'admin@school.local') {
+                        try {
+                            await supabaseClient.from('users').upsert({
+                                id: user.id,
+                                email: user.email
+                            }, { onConflict: 'id' });
+
+                            const { data: schoolData } = await supabaseClient.from('schools').select('id').limit(1).maybeSingle();
+                            const schoolId = schoolData?.id || '00000000-0000-0000-0000-000000000001';
+
+                            await supabaseClient.from('app_access').upsert({
+                                user_id: user.id,
+                                school_id: schoolId,
+                                app_name: 'ledger',
+                                app_role: 'accountant',
+                                is_active: true
+                            }, { onConflict: 'user_id,school_id,app_name' });
+                        } catch (accessErr) {
+                            console.warn("Could not ensure app_access for user:", accessErr);
+                        }
+                    }
                 }
             } catch (e) {
                 console.error("Error setting user profile:", e);
             }
         }
 
-        window.submitFirstTimeProfile = function() {};
+        window.submitFirstTimeProfile = function() {
+            // First-time onboarding placeholder
+        };
 
         window.showProfileModal = function() {
             if (!currentUser) return;
@@ -1316,7 +1422,13 @@
             const nameEl = document.getElementById('profileModalFullName');
             if (nameEl) {
                 nameEl.value = userProfileData?.fullName || currentUser.user_metadata?.full_name || currentUser.email.split('@')[0];
+                nameEl.disabled = true;
             }
+
+            const editBtn = document.getElementById('profileEditBtn');
+            if (editBtn) editBtn.style.display = 'inline-flex';
+            const saveBtn = document.getElementById('profileSaveBtn');
+            if (saveBtn) saveBtn.style.display = 'none';
 
             modal.style.display = 'flex';
         };
@@ -1324,11 +1436,136 @@
         window.hideProfileModal = function() {
             const modal = document.getElementById('profileModal');
             if (modal) modal.style.display = 'none';
+            const nameEl = document.getElementById('profileModalFullName');
+            if (nameEl) nameEl.disabled = true;
+            const editBtn = document.getElementById('profileEditBtn');
+            if (editBtn) editBtn.style.display = 'inline-flex';
+            const saveBtn = document.getElementById('profileSaveBtn');
+            if (saveBtn) saveBtn.style.display = 'none';
         };
 
-        window.enableProfileEdit = function() {};
-        window.saveProfileChanges = function() {};
+        window.enableProfileEdit = function() {
+            const nameInput = document.getElementById('profileModalFullName');
+            if (nameInput) {
+                nameInput.disabled = false;
+                nameInput.removeAttribute('readonly');
+                nameInput.focus();
+                nameInput.select();
+            }
+            const saveBtn = document.getElementById('profileSaveBtn');
+            if (saveBtn) saveBtn.style.display = 'inline-flex';
+            const editBtn = document.getElementById('profileEditBtn');
+            if (editBtn) editBtn.style.display = 'none';
+        };
 
+        window.saveProfileChanges = async function() {
+            const nameInput = document.getElementById('profileModalFullName');
+            if (!nameInput || !currentUser) return;
+            const newName = nameInput.value.trim();
+            if (!newName) {
+                showToast('Name cannot be empty.', 'error');
+                return;
+            }
+            try {
+                if (supabaseClient && currentUser.email !== 'admin@school.local') {
+                    const { error } = await supabaseClient.from('user_profiles')
+                        .upsert({ email: currentUser.email, full_name: newName, auth_user_id: currentUser.id });
+                    if (error) throw error;
+                }
+                userProfileData = { ...(userProfileData || {}), email: currentUser.email, fullName: newName, userId: currentUser.id };
+                localStorage.setItem('user_profile_' + currentUser.email, JSON.stringify(userProfileData));
+                const nameEl = document.getElementById('userName');
+                if (nameEl) nameEl.textContent = newName;
+                showToast('Profile updated!', 'success');
+                hideProfileModal();
+            } catch (e) {
+                console.error("Save profile error:", e);
+                showToast('Failed to save profile: ' + (e.message || e), 'error');
+            }
+        };
+
+        // ─── FACULTY TRANSACTION METADATA BINDING ───
+
+        function getLocalFacultyData() {
+            let facultyList = [];
+            let facultyPayments = [];
+            try {
+                const rawF = localStorage.getItem('school_accountant_faculty');
+                if (rawF) facultyList = JSON.parse(rawF);
+            } catch (e) {}
+            try {
+                const rawP = localStorage.getItem('school_accountant_faculty_payments');
+                if (rawP) facultyPayments = JSON.parse(rawP);
+            } catch (e) {}
+
+            if ((!facultyList || facultyList.length === 0) && window.currentFacultyList && window.currentFacultyList.length > 0) {
+                facultyList = window.currentFacultyList;
+            }
+            return { facultyList, facultyPayments };
+        }
+
+        function stitchSingleTransactionFaculty(t, facultyData) {
+            if (!t) return;
+            const { facultyList, facultyPayments } = facultyData || getLocalFacultyData();
+            
+            // 1. Match from faculty payments cache by transaction_id or voucher_number / reference
+            const refTrim = (t.reference || '').trim().toLowerCase();
+            const facPayment = facultyPayments.find(fp => {
+                const fpVoucher = (fp.voucher_number || '').trim().toLowerCase();
+                return (fp.transaction_id && t.id && Number(fp.transaction_id) === Number(t.id)) ||
+                       (fpVoucher && refTrim && fpVoucher === refTrim);
+            });
+
+            if (facPayment) {
+                const facMember = facultyList.find(f => 
+                    (f.id && facPayment.faculty_id && String(f.id).toLowerCase() === String(facPayment.faculty_id).toLowerCase()) ||
+                    (f.employee_id && facPayment.employee_id && String(f.employee_id).toLowerCase() === String(facPayment.employee_id).toLowerCase())
+                );
+
+                if (facMember) {
+                    t.faculty = {
+                        id: facMember.id,
+                        name: facMember.name || facMember.faculty_name,
+                        employee_id: facMember.employee_id,
+                        department: facMember.department || '',
+                        designation: facMember.designation || ''
+                    };
+                } else if (facPayment.faculty_name || facPayment.name) {
+                    t.faculty = {
+                        id: facPayment.faculty_id || '',
+                        name: facPayment.faculty_name || facPayment.name,
+                        employee_id: facPayment.employee_id || '',
+                        department: facPayment.department || '',
+                        designation: facPayment.designation || ''
+                    };
+                }
+            }
+
+            // 2. Fallback heuristic: check if transaction belongs to Faculty Expenses and matches an employee_id or name in particulars
+            if (!t.faculty && (t.mainCategory === 'Faculty Expenses' || t.mainCategory === 'Faculty')) {
+                const partLower = (t.particulars || '').toLowerCase();
+                const matched = facultyList.find(f => {
+                    const empLower = (f.employee_id || '').toLowerCase();
+                    const nameLower = (f.name || f.faculty_name || '').toLowerCase();
+                    return (empLower && empLower.length >= 3 && partLower.includes(empLower)) ||
+                           (nameLower && nameLower.length >= 3 && partLower.includes(nameLower));
+                });
+                if (matched) {
+                    t.faculty = {
+                        id: matched.id,
+                        name: matched.name || matched.faculty_name,
+                        employee_id: matched.employee_id,
+                        department: matched.department || '',
+                        designation: matched.designation || ''
+                    };
+                }
+            }
+        }
+
+        function stitchFacultyToTransactions() {
+            const facultyData = getLocalFacultyData();
+            transactions.forEach(t => stitchSingleTransactionFaculty(t, facultyData));
+        }
 
         function loadData() {
             const raw = localStorage.getItem(STORAGE_KEY);
@@ -1489,6 +1726,9 @@
                     feePaymentsModified = true;
                 }
             });
+
+            // Stitch faculty metadata back in-memory from faculty payments & directory
+            stitchFacultyToTransactions();
 
             if (feePaymentsModified) {
                 localStorage.setItem(FEE_PAYMENTS_KEY, JSON.stringify(feePayments));
@@ -1704,18 +1944,39 @@
                     list = list.filter(t => searchTags.every(st => t.tags && t.tags.some(tag => tag.toLowerCase().includes(st))));
                 }
 
-                // Match students
+                // Match students or faculty
                 if (searchStudents.length > 0) {
-                    list = list.filter(t => searchStudents.every(ss => t.student && (
-                        t.student.name.toLowerCase().includes(ss) ||
-                        t.student.admissionNumber.toLowerCase().includes(ss) ||
-                        (t.student.rollNumber && t.student.rollNumber.toLowerCase().includes(ss))
-                    )));
+                    list = list.filter(t => searchStudents.every(ss => 
+                        (t.student && (
+                            (t.student.name && t.student.name.toLowerCase().includes(ss)) ||
+                            (t.student.admissionNumber && t.student.admissionNumber.toLowerCase().includes(ss)) ||
+                            (t.student.rollNumber && t.student.rollNumber.toLowerCase().includes(ss))
+                        )) ||
+                        (t.faculty && (
+                            (t.faculty.name && t.faculty.name.toLowerCase().includes(ss)) ||
+                            (t.faculty.employee_id && t.faculty.employee_id.toLowerCase().includes(ss)) ||
+                            (t.faculty.department && t.faculty.department.toLowerCase().includes(ss)) ||
+                            (t.faculty.designation && t.faculty.designation.toLowerCase().includes(ss))
+                        ))
+                    ));
                 }
 
-                // Match plain description or reference
+                // Match plain description, reference, student, or faculty
                 if (plainSearch) {
-                    list = list.filter(t => t.particulars.toLowerCase().includes(plainSearch) || t.reference.toLowerCase().includes(plainSearch));
+                    list = list.filter(t => 
+                        (t.particulars && t.particulars.toLowerCase().includes(plainSearch)) || 
+                        (t.reference && t.reference.toLowerCase().includes(plainSearch)) ||
+                        (t.student && (
+                            (t.student.name && t.student.name.toLowerCase().includes(plainSearch)) ||
+                            (t.student.admissionNumber && t.student.admissionNumber.toLowerCase().includes(plainSearch))
+                        )) ||
+                        (t.faculty && (
+                            (t.faculty.name && t.faculty.name.toLowerCase().includes(plainSearch)) ||
+                            (t.faculty.employee_id && t.faculty.employee_id.toLowerCase().includes(plainSearch)) ||
+                            (t.faculty.department && t.faculty.department.toLowerCase().includes(plainSearch)) ||
+                            (t.faculty.designation && t.faculty.designation.toLowerCase().includes(plainSearch))
+                        ))
+                    );
                 }
             }
 
@@ -2277,6 +2538,7 @@
 
         // ─── Render Expense List ───
         function renderExpenseList() {
+            stitchFacultyToTransactions();
             const list = transactions.filter(t => !t.isDeleted && t.type === 'expense')
                 .sort((a, b) => b.id - a.id)
                 .slice(0, 20);
@@ -2292,6 +2554,14 @@
                     tagsHtml = t.tags.map(tag => `<span style="background: #f1f3f4; color: #5e6f8a; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">#${escapeHtml(tag)}</span>`).join('');
                 }
                 let studentHtml = t.student ? `<span style="background: #e8f0fe; color: #1a73e8; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">👤 ${escapeHtml(t.student.name)}</span>` : '';
+                let facultyHtml = '';
+                if (t.faculty) {
+                    const fName = t.faculty.name || 'Faculty';
+                    const fEmpId = t.faculty.employee_id ? ` (${t.faculty.employee_id})` : '';
+                    const fDept = t.faculty.department ? ` • ${t.faculty.department}` : '';
+                    const clickAttr = t.faculty.id ? `onclick="if(window.openFacultyHistoryModal) window.openFacultyHistoryModal('${t.faculty.id}')" title="Click to view faculty payment history"` : '';
+                    facultyHtml = `<span class="tx-faculty-badge" ${clickAttr} style="background: #fdf2f8; color: #9d174d; border: 1px solid #fbcfe8; font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 10px; margin-left: 4px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;">👨‍🏫 ${escapeHtml(fName)}${escapeHtml(fEmpId)}${escapeHtml(fDept)}</span>`;
+                }
 
                 return `
                 <div class="tx-item">
@@ -2300,6 +2570,7 @@
                   <span class="tx-particulars" style="flex: 2 1 180px;">
                       ${escapeHtml(t.reference)} — ${escapeHtml(t.particulars)}
                       ${studentHtml}
+                      ${facultyHtml}
                       ${tagsHtml}
                   </span>
                   <span class="tx-amount expense">-₹${t.amount.toFixed(2)}</span>
@@ -2317,6 +2588,7 @@
         //  TRANSACTIONS (full list)
         // ════════════════════════════════════════════════════════════════
         function renderTransactions() {
+            stitchFacultyToTransactions();
             const type = document.getElementById('txFilterType').value;
             const dateFrom = document.getElementById('txFilterDateFrom').value;
             const dateTo = document.getElementById('txFilterDateTo').value;
@@ -2365,6 +2637,20 @@
                     `;
                 }
 
+                // Construct faculty HTML
+                let facultyHtml = '';
+                if (t.faculty) {
+                    const fName = t.faculty.name || 'Faculty';
+                    const fEmpId = t.faculty.employee_id ? ` (${t.faculty.employee_id})` : '';
+                    const fDept = t.faculty.department ? ` • ${t.faculty.department}` : '';
+                    const clickAttr = t.faculty.id ? `onclick="if(window.openFacultyHistoryModal) window.openFacultyHistoryModal('${t.faculty.id}')" title="Click to view faculty payment history"` : '';
+                    facultyHtml = `
+                        <span class="tx-faculty-badge" ${clickAttr} style="background: #fdf2f8; color: #9d174d; border: 1px solid #fbcfe8; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; transition: all 0.2s ease;">
+                            👨‍🏫 ${escapeHtml(fName)}${escapeHtml(fEmpId)}${escapeHtml(fDept)}
+                        </span>
+                    `;
+                }
+
                 // Construct audit string
                 const creator = t.createdBy || 'Unknown';
                 const createdTime = t.createdAt ? new Date(t.createdAt).toLocaleString() : 'Unknown';
@@ -2393,6 +2679,7 @@
                     <div>${escapeHtml(t.reference)} — ${escapeHtml(t.particulars)}</div>
                     <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
                         ${studentHtml}
+                        ${facultyHtml}
                         ${tagsHtml}
                     </div>
                     ${auditHtml}
@@ -2764,7 +3051,7 @@
             }
 
             // Confirm
-            if (!confirm('Push all ' + transactions.length + ' transactions to Supabase? This will overwrite remote data.'))
+            if (!confirm('Push all ' + transactions.length + ' transactions to Supabase? (Note: Only transaction rows and their revisions/attachments are pushed. Use Sync to sync all 13 tables including fees and students.)'))
                 return;
 
             try {
@@ -2851,11 +3138,29 @@
                 showToast('No data to export.', 'error');
                 return;
             }
-            const headers = ['id', 'type', 'date', 'reference', 'particulars', 'amount', 'head', 'bankAmount',
-                'chequeCount'
+            const headers = [
+                'id', 'type', 'date', 'reference', 'particulars', 'amount', 'head',
+                'bankAmount', 'chequeCount', 'mainCategory', 'subCategory', 'tags',
+                'studentAdmission', 'studentName', 'academicYear', 'feeMonth', 'isDeleted'
             ];
             const rows = transactions.map(t => [
-                t.id, t.type, t.date, t.reference, t.particulars, t.amount, t.head, t.bankAmount || 0, t.chequeCount || 0
+                t.id,
+                t.type,
+                t.date,
+                t.reference,
+                t.particulars,
+                t.amount,
+                t.head,
+                t.bankAmount || 0,
+                t.chequeCount || 0,
+                t.mainCategory || '',
+                t.subCategory || '',
+                (t.tags || []).join('|'),
+                t.student ? (t.student.admissionNumber || '') : '',
+                t.student ? (t.student.name || '') : '',
+                t.academicYear || '',
+                t.feeMonth || '',
+                t.isDeleted ? '1' : '0'
             ]);
             const csv = Papa.unparse({ fields: headers, data: rows });
             downloadFile(csv, 'transactions_export.csv', 'text/csv');
@@ -2887,6 +3192,20 @@
                             chequeCount: parseInt(row.chequeCount) || 0,
                             attachments: []
                         };
+                        if (row.mainCategory) tx.mainCategory = row.mainCategory.trim();
+                        if (row.subCategory) tx.subCategory = row.subCategory.trim();
+                        if (row.tags) tx.tags = row.tags.split('|').map(s => s.trim()).filter(Boolean);
+                        if (row.academicYear) tx.academicYear = row.academicYear.trim();
+                        if (row.feeMonth) tx.feeMonth = row.feeMonth.trim();
+                        if (row.studentAdmission || row.studentName) {
+                            tx.student = {
+                                admissionNumber: (row.studentAdmission || '').trim(),
+                                name: (row.studentName || '').trim()
+                            };
+                        }
+                        if (row.isDeleted !== undefined) {
+                            tx.isDeleted = row.isDeleted === '1' || row.isDeleted === 'true';
+                        }
                         if (tx.type !== 'income' && tx.type !== 'expense') return;
                         if (!tx.date || !tx.reference || !tx.particulars || tx.amount === 0) return;
                         // check for duplicate by id
@@ -2900,6 +3219,9 @@
                         }
                         imported++;
                     });
+                    if (transactions.length > 0) {
+                        nextId = Math.max(...transactions.map(t => t.id || 0), 0) + 1;
+                    }
                     saveData();
                     showToast('✅ Imported ' + imported + ' transactions from CSV.', 'success');
                     renderAll();
@@ -3605,6 +3927,88 @@
                 container.appendChild(span);
             });
         }
+
+        // ════════════════════════════════════════════════════════════════
+        //  ADD STUDENT MODAL LOGIC
+        // ════════════════════════════════════════════════════════════════
+
+        window.showAddStudentModal = function() {
+            const form = document.getElementById('addStudentForm');
+            if (form) form.reset();
+            document.getElementById('addStudentModal').style.display = 'flex';
+        };
+
+        window.hideAddStudentModal = function() {
+            const modal = document.getElementById('addStudentModal');
+            if (modal) modal.style.display = 'none';
+        };
+
+        window.saveNewStudent = async function(event) {
+            if (event && typeof event.preventDefault === 'function') event.preventDefault();
+            const adm = (document.getElementById('newStudentAdmNo').value || '').trim();
+            const name = (document.getElementById('newStudentName').value || '').trim();
+            const cls = (document.getElementById('newStudentClass').value || '').trim();
+            const sec = (document.getElementById('newStudentSection').value || '').trim();
+            const roll = (document.getElementById('newStudentRollNo').value || '').trim();
+            const father = (document.getElementById('newStudentFather').value || '').trim();
+            const phone = (document.getElementById('newStudentPhone').value || '').trim();
+
+            if (!adm || !name || !cls || !sec) {
+                showToast('Please fill in Admission Number, Student Name, Class, and Section.', 'error');
+                return;
+            }
+
+            const existingIndex = students.findIndex(s => s.admissionNumber.toLowerCase() === adm.toLowerCase());
+            const newStudent = {
+                admissionNumber: adm,
+                name: name,
+                rollNumber: roll,
+                class: cls,
+                section: sec,
+                fatherName: father,
+                phone: phone
+            };
+
+            if (existingIndex >= 0) {
+                students[existingIndex] = newStudent;
+            } else {
+                students.push(newStudent);
+            }
+
+            localStorage.removeItem('school_accountant_students_cleared');
+            saveStudents();
+            updateStudentCountDisplay();
+
+            // Push to Supabase if connected
+            if (supabaseClient && navigator.onLine) {
+                try {
+                    await supabaseClient.from('students').upsert({
+                        admission_number: adm,
+                        name: name,
+                        roll_number: roll,
+                        class: cls,
+                        section: sec,
+                        father_name: father,
+                        phone: phone,
+                        updated_at: new Date().toISOString()
+                    }, { onConflict: 'admission_number' });
+                } catch (err) {
+                    console.warn('Failed to upsert student to Supabase:', err);
+                }
+            }
+
+            showToast(`✅ Student ${name} (${adm}) saved successfully!`, 'success');
+            hideAddStudentModal();
+
+            // Re-render student filters & fee tables
+            if (typeof populateFeesStatusFilters === 'function') populateFeesStatusFilters();
+            if (typeof populateAssignSectionFilter === 'function') populateAssignSectionFilter();
+            if (typeof populateStudentFilters === 'function') populateStudentFilters();
+            if (typeof renderStudentDirectory === 'function') renderStudentDirectory();
+            if (typeof renderFeesStatus === 'function') renderFeesStatus();
+            if (typeof renderFeesOverview === 'function') renderFeesOverview();
+            if (typeof renderStudentFeeAssignments === 'function') renderStudentFeeAssignments();
+        };
 
         // ════════════════════════════════════════════════════════════════
         //  STUDENT DIRECTORY VIEW RESUMES
@@ -4753,6 +5157,44 @@
             const tbody = document.getElementById('feesStatusMatrixBody');
             tbody.innerHTML = '';
             
+            if (filteredStudents.length === 0) {
+                const totalCols = feeTypesCols.length + 5;
+                if (students.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="${totalCols}" style="text-align:center; padding: 50px 16px; background: #fafcff;">
+                                <div style="font-size: 42px; margin-bottom: 12px;">👨‍🎓</div>
+                                <div style="font-size: 17px; font-weight: 700; color: #0b2a4a;">No Students in Directory Yet</div>
+                                <div style="font-size: 13px; color: #64748b; margin-top: 6px; max-width: 480px; margin-left: auto; margin-right: auto; line-height: 1.5;">
+                                    The Student Fee Status matrix automatically generates a row for each enrolled student to track assigned fees, payments, and dues. Add your first student or import your student list to start managing fees.
+                                </div>
+                                <div style="display: flex; justify-content: center; gap: 10px; margin-top: 18px; flex-wrap: wrap;">
+                                    <button class="btn btn-primary" onclick="showAddStudentModal()" style="font-weight:600; padding:8px 20px; background: linear-gradient(135deg, #0b2a4a 0%, #1d4b6e 100%);">
+                                        <span>➕</span> Add Student
+                                    </button>
+                                    <button class="btn btn-outline" onclick="window.isImportingStudentCSV = true; document.getElementById('studentCsvImportInput').click()" style="padding:8px 18px;">
+                                        <span>📥</span> Import Student CSV
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                } else {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="${totalCols}" style="text-align:center; padding: 40px 16px; color: #64748b;">
+                                <div style="font-size: 32px; margin-bottom: 8px;">🔍</div>
+                                <div style="font-weight: 700; color: #0b2a4a; font-size: 15px;">No students match the selected filters</div>
+                                <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Try clearing your Class, Section, Fee Type, or Status filter options.</div>
+                                <button class="btn btn-outline btn-sm" onclick="resetFeesStatusFilters()" style="margin-top: 14px;">Reset Filters</button>
+                            </td>
+                        </tr>
+                    `;
+                }
+                document.getElementById('feesStatusSummary').innerHTML = `Showing <b>0</b> students of <b>${students.length}</b>. Grand Totals – Structured: <b>₹0.00</b> | Paid: <b>₹0.00</b> | Pending Fees: <strong>₹0.00</strong>`;
+                return;
+            }
+
             let matchedCount = 0;
             let totalStructuredAll = 0;
             let totalPaidAll = 0;
@@ -4872,6 +5314,44 @@
             const tbody = document.getElementById('assignMatrixBody');
             tbody.innerHTML = '';
             
+            if (filteredStudents.length === 0) {
+                const totalCols = activeFeeTypes.length + 5;
+                if (students.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="${totalCols}" style="text-align:center; padding: 50px 16px; background: #fafcff;">
+                                <div style="font-size: 42px; margin-bottom: 12px;">👨‍🎓</div>
+                                <div style="font-size: 17px; font-weight: 700; color: #0b2a4a;">No Students in Directory Yet</div>
+                                <div style="font-size: 13px; color: #64748b; margin-top: 6px; max-width: 480px; margin-left: auto; margin-right: auto; line-height: 1.5;">
+                                    Fee assignment allows custom fee amounts per student. Add your first student or import student records to configure individual fee assignments.
+                                </div>
+                                <div style="display: flex; justify-content: center; gap: 10px; margin-top: 18px; flex-wrap: wrap;">
+                                    <button class="btn btn-primary" onclick="showAddStudentModal()" style="font-weight:600; padding:8px 20px; background: linear-gradient(135deg, #0b2a4a 0%, #1d4b6e 100%);">
+                                        <span>➕</span> Add Student
+                                    </button>
+                                    <button class="btn btn-outline" onclick="window.isImportingStudentCSV = true; document.getElementById('studentCsvImportInput').click()" style="padding:8px 18px;">
+                                        <span>📥</span> Import Student CSV
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                } else {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="${totalCols}" style="text-align:center; padding: 40px 16px; color: #64748b;">
+                                <div style="font-size: 32px; margin-bottom: 8px;">🔍</div>
+                                <div style="font-weight: 700; color: #0b2a4a; font-size: 15px;">No students match the current filters</div>
+                                <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Try clearing your search query or class/section filters.</div>
+                                <button class="btn btn-outline btn-sm" onclick="resetAssignFilters()" style="margin-top: 14px;">Reset Filters</button>
+                            </td>
+                        </tr>
+                    `;
+                }
+                document.getElementById('assignSummary').innerHTML = `Showing <b>0</b> students of <b>${students.length}</b>. Grand Total Assigned: <b>₹0.00</b>`;
+                return;
+            }
+
             let matchedCount = 0;
             let grandTotalAssigned = 0;
             
@@ -6809,6 +7289,13 @@
 
             console.log('📘 School Accountant initialized. Transactions:', transactions.length);
         }
+
+        // Global exposures for inter-module coordination
+        window.syncAllFromSupabase = syncAllFromSupabase;
+        window.getNextId = getNextId;
+        window.renderTransactions = renderTransactions;
+        window.renderExpenseList = renderExpenseList;
+        window.stitchFacultyToTransactions = stitchFacultyToTransactions;
 
         // ─── Auto-run ───
         document.addEventListener('DOMContentLoaded', init);

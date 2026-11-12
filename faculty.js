@@ -75,9 +75,13 @@
         try {
             const data = await window.DataService.getFaculty();
             currentFacultyList = Array.isArray(data) ? data : [];
+            window.currentFacultyList = currentFacultyList;
             updateFacultyKPIs(currentFacultyList);
             populateDepartmentFilter(currentFacultyList);
             filterFacultyTable();
+            if (typeof window.stitchFacultyToTransactions === 'function') {
+                window.stitchFacultyToTransactions();
+            }
         } catch (e) {
             console.error("Error loading faculty:", e);
             if (window.showToast) {
@@ -565,8 +569,15 @@
         const catSelect = document.getElementById('paySalaryCategory');
         const selectedCatText = catSelect && catSelect.selectedOptions && catSelect.selectedOptions[0] ? catSelect.selectedOptions[0].textContent : 'Salary';
 
+        const facultyId = document.getElementById('paySalaryFacultyId').value;
+        const faculty = currentFacultyList.find(f => f.id === facultyId);
+
         const payload = {
-            faculty_id: document.getElementById('paySalaryFacultyId').value,
+            faculty_id: facultyId,
+            faculty_name: faculty ? (faculty.name || faculty.faculty_name) : '',
+            employee_id: faculty ? faculty.employee_id : '',
+            department: faculty ? faculty.department : '',
+            designation: faculty ? faculty.designation : '',
             payment_date: document.getElementById('paySalaryDate').value,
             amount: parseFloat(document.getElementById('paySalaryAmount').value),
             expense_category_id: catSelect ? catSelect.value : null,
@@ -594,10 +605,22 @@
             }
             hidePaySalaryModal();
             // Refresh global transactions in app.js
+            if (typeof window.stitchFacultyToTransactions === 'function') {
+                window.stitchFacultyToTransactions();
+            }
             if (typeof window.syncAllFromSupabase === 'function') {
                 window.syncAllFromSupabase();
             } else if (typeof window.loadDataFromSupabase === 'function') {
                 await window.loadDataFromSupabase();
+            }
+            if (typeof window.stitchFacultyToTransactions === 'function') {
+                window.stitchFacultyToTransactions();
+            }
+            if (typeof window.renderTransactions === 'function') {
+                window.renderTransactions();
+            }
+            if (typeof window.renderExpenseList === 'function') {
+                window.renderExpenseList();
             }
             if (typeof window.updateDashboardFacultyMetrics === 'function') {
                 window.updateDashboardFacultyMetrics();
@@ -622,7 +645,18 @@
     // --- Salary History ---
 
     window.openFacultyHistoryModal = async function(id) {
-        const faculty = currentFacultyList.find(f => f.id === id);
+        if (!currentFacultyList || currentFacultyList.length === 0) {
+            try {
+                const raw = localStorage.getItem('school_accountant_faculty');
+                if (raw) currentFacultyList = JSON.parse(raw);
+            } catch(e) {}
+        }
+        if (!currentFacultyList || currentFacultyList.length === 0) {
+            try {
+                currentFacultyList = await window.DataService.getFaculty();
+            } catch(e) {}
+        }
+        const faculty = (currentFacultyList || []).find(f => f.id === id || f.employee_id === id);
         if (!faculty) return;
 
         document.getElementById('facultyHistoryTitle').innerText = `📜 Payment History: ${faculty.name}`;

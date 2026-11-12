@@ -69,8 +69,9 @@
     }
 
     const DataService = {
+        // insertTransaction migrated to app.js -> uploadTransactionAndRevision
         async insertTransaction(tx, rev) {
-            // Placeholder: Migrated progressively into app.js
+            console.warn("DataService.insertTransaction is deprecated; transaction mutations are handled via app.js uploadTransactionAndRevision");
         },
 
         // --- FACULTY API ---
@@ -121,6 +122,7 @@
                             status: f.status || 'active'
                         }));
                         saveLocalFaculty(mapped);
+                        window.currentFacultyList = mapped;
                         return mapped;
                     }
                     if (error) {
@@ -361,7 +363,8 @@
             let categoryId = payload.expense_category_id;
 
             if (isRealAuth()) {
-                if (!categoryId) {
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                if (!categoryId || !uuidRegex.test(categoryId)) {
                     const { data: cat } = await supabase
                         .from('faculty_expense_categories')
                         .select('id')
@@ -371,7 +374,7 @@
                     categoryId = cat ? cat.id : null;
                 }
 
-                if (!categoryId) {
+                if (!categoryId || !uuidRegex.test(categoryId)) {
                     const { data: anyCat } = await supabase
                         .from('faculty_expense_categories')
                         .select('id')
@@ -380,46 +383,154 @@
                     categoryId = anyCat ? anyCat.id : null;
                 }
 
-                if (!categoryId) {
+                if (!categoryId || !uuidRegex.test(categoryId)) {
                     categoryId = DEFAULT_CATEGORIES[0].id;
                 }
 
                 const voucherNo = payload.reference || ('VCH-' + Date.now().toString().slice(-6));
 
-                const { data, error } = await supabase.rpc('pay_faculty_salary', {
-                    p_faculty_id: payload.faculty_id,
-                    p_expense_category_id: categoryId,
-                    p_payment_date: payload.payment_date,
-                    p_voucher_number: voucherNo,
-                    p_amount: Number(payload.amount),
-                    p_payment_mode: payload.payment_method || 'Cash',
-                    p_remarks: payload.remarks || '',
-                    p_transaction_head: 'Expenses',
-                    p_transaction_main_category: 'Faculty Expenses',
-                    p_transaction_sub_category: payload.expense_category_name || 'Salary'
-                });
+                // Normalize payment mode to match PostgreSQL check constraint:
+                // CHECK (payment_mode IN ('cash', 'bank_transfer', 'cheque', 'upi', 'other'))
+                const rawMode = String(payload.payment_method || 'cash').toLowerCase();
+                let mode = 'cash';
+                if (rawMode.includes('bank') || rawMode.includes('neft') || rawMode.includes('rtgs') || rawMode.includes('imps') || rawMode.includes('transfer')) {
+                    mode = 'bank_transfer';
+                } else if (rawMode.includes('cheque') || rawMode.includes('check')) {
+                    mode = 'cheque';
+                } else if (rawMode.includes('upi') || rawMode.includes('qr')) {
+                    mode = 'upi';
+                } else if (rawMode.includes('cash')) {
+                    mode = 'cash';
+                } else {
+                    mode = 'other';
+                }
 
-                if (error) throw error;
+                let paymentId = null;
+                let nextTxId = null;
 
-                // Also record in local history cache
+                try {
+                    const { data, error } = await supabase.rpc('pay_faculty_salary', {
+                        p_faculty_id: payload.faculty_id,
+                        p_expense_category_id: categoryId,
+                        p_payment_date: payload.payment_date,
+                        p_voucher_number: voucherNo,
+                        p_amount: Number(payload.amount),
+                        p_payment_mode: mode,
+                        p_remarks: payload.remarks || '',
+                        p_transaction_head: 'Expenses',
+                        p_transaction_main_category: 'Faculty Expenses',
+                        p_transaction_sub_category: payload.expense_category_name || 'Salary'
+                    });
+
+                    if (error) {
+                        console.warn("pay_faculty_salary RPC call failed, attempting direct Supabase fallback:", error);
+                        throw error;
+                    }
+
+                    paymentId = data;
+                } catch (rpcErr) {
+                    console.warn("Attempting direct Supabase ledger insert fallback:", rpcErr);
+
+                    // 1. Determine next transaction id
+                    try {
+                        const { data: txList } = await supabase
+                            .from('transactions')
+                            .select('id')
+                            .order('id', { ascending: false })
+                            .limit(1);
+                        if (txList && txList.length > 0 && Number.isInteger(txList[0].id)) {
+                            nextTxId = txList[0].id + 1;
+                        }
+                    } catch (idErr) {
+                        console.warn("Could not query max transaction id:", idErr);
+                    }
+
+                    if (!nextTxId) {
+                        nextTxId = (typeof window.getNextId === 'function')
+                            ? window.getNextId()
+                            : Math.floor(Date.now() / 1000);
+                    }
+
+                    const remarksText = payload.remarks ? payload.remarks.trim() : 'Faculty Salary Payment';
+
+                    // 2. Insert into transactions table
+                    const txPayload = {
+                        id: nextTxId,
+                        type: 'expense',
+                        date: payload.payment_date,
+                        reference: voucherNo,
+                        particulars: remarksText || 'Faculty Salary Payment',
+                        amount: Number(payload.amount),
+                        head: 'Expenses',
+                        main_category: 'Faculty Expenses',
+                        sub_category: payload.expense_category_name || 'Salary',
+                        created_by: (window.currentUser && window.currentUser.email) ? window.currentUser.email : 'system'
+                    };
+
+                    const { error: txErr } = await supabase
+                        .from('transactions')
+                        .insert(txPayload);
+
+                    if (txErr) {
+                        console.error("Direct transaction insert failed:", txErr);
+                        throw txErr;
+                    }
+
+                    // 3. Insert into faculty_expense_payments table
+                    const payPayload = {
+                        faculty_id: payload.faculty_id,
+                        expense_category_id: categoryId,
+                        transaction_id: nextTxId,
+                        payment_date: payload.payment_date,
+                        voucher_number: voucherNo,
+                        amount: Number(payload.amount),
+                        payment_mode: mode,
+                        remarks: remarksText
+                    };
+
+                    const { data: payData, error: payErr } = await supabase
+                        .from('faculty_expense_payments')
+                        .insert(payPayload)
+                        .select('id')
+                        .single();
+
+                    if (payErr) {
+                        console.error("Direct faculty_expense_payments insert failed:", payErr);
+                        throw payErr;
+                    }
+
+                    paymentId = payData ? payData.id : ('pay_' + Date.now());
+                }
+
+                // Also record in local history cache with rich metadata
                 saveLocalPayment({
-                    id: 'pay_' + Date.now(),
+                    id: paymentId || ('pay_' + Date.now()),
+                    transaction_id: nextTxId,
                     faculty_id: payload.faculty_id,
+                    faculty_name: payload.faculty_name || '',
+                    employee_id: payload.employee_id || '',
+                    department: payload.department || '',
+                    designation: payload.designation || '',
                     expense_category: payload.expense_category_name || 'Salary',
                     payment_date: payload.payment_date,
                     amount: payload.amount,
-                    payment_mode: payload.payment_method || 'Cash',
+                    payment_mode: mode,
                     voucher_number: voucherNo,
                     remarks: payload.remarks || ''
                 });
 
-                return data;
+                return paymentId;
             } else {
                 // Offline fallback recording
                 const voucherNo = payload.reference || ('VCH-OFFLINE-' + Date.now().toString().slice(-6));
                 const paymentRecord = {
                     id: 'pay_' + Date.now(),
+                    transaction_id: typeof window.getNextId === 'function' ? window.getNextId() : Date.now(),
                     faculty_id: payload.faculty_id,
+                    faculty_name: payload.faculty_name || '',
+                    employee_id: payload.employee_id || '',
+                    department: payload.department || '',
+                    designation: payload.designation || '',
                     expense_category: payload.expense_category_name || 'Salary',
                     payment_date: payload.payment_date,
                     amount: payload.amount,
@@ -498,6 +609,7 @@
                         .from('faculty_expense_payments')
                         .select(`
                             id,
+                            transaction_id,
                             faculty_id,
                             payment_date,
                             amount,
@@ -521,8 +633,9 @@
                         .order('payment_date', { ascending: false });
 
                     if (!error && data) {
-                        return data.map(r => ({
+                        const mapped = data.map(r => ({
                             id: r.id,
+                            transaction_id: r.transaction_id,
                             faculty_id: r.faculty_id,
                             employee_id: r.faculty?.employee_id || '',
                             faculty_name: r.faculty?.faculty_name || '',
@@ -533,9 +646,14 @@
                             amount: parseFloat(r.amount) || 0,
                             payment_mode: r.payment_mode || 'Cash',
                             voucher_number: r.voucher_number || '',
+                            expense_category: r.faculty_expense_categories?.name || 'Salary',
                             category: r.faculty_expense_categories?.name || 'Salary',
                             remarks: r.remarks || ''
                         }));
+                        try {
+                            localStorage.setItem(FACULTY_PAYMENTS_CACHE_KEY, JSON.stringify(mapped));
+                        } catch (e) {}
+                        return mapped;
                     }
                 } catch (e) {
                     console.warn("Error fetching all payments from Supabase:", e);
