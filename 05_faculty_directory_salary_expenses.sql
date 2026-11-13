@@ -245,6 +245,8 @@ CREATE INDEX IF NOT EXISTS idx_faculty_payments_date
 -- ---------------------------------------------------------------------------
 
 DO $$
+DECLARE
+  v_max_id integer;
 BEGIN
   IF EXISTS (
     SELECT 1
@@ -261,6 +263,13 @@ BEGIN
       FOREIGN KEY (transaction_id)
       REFERENCES public.transactions(id)
       ON DELETE RESTRICT;
+
+    -- Ensure transactions.id has an auto-incrementing sequence default
+    CREATE SEQUENCE IF NOT EXISTS public.transactions_id_seq;
+    SELECT COALESCE(MAX(id), 0) INTO v_max_id FROM public.transactions;
+    PERFORM setval('public.transactions_id_seq', GREATEST(v_max_id, 1), true);
+    ALTER TABLE public.transactions
+      ALTER COLUMN id SET DEFAULT nextval('public.transactions_id_seq');
   END IF;
 END $$;
 
@@ -705,6 +714,7 @@ DECLARE
   v_transaction_id integer;
   v_payment_id uuid;
   v_user_id uuid;
+  v_normalized_mode text;
 BEGIN
   -- 1. Validate Access
   v_user_id := auth.uid();
@@ -723,8 +733,35 @@ BEGIN
 
   v_school_id := public.ledger_school_id();
 
-  -- 2. Insert into transactions table
+  -- Normalize payment mode to match check constraint:
+  -- ('cash', 'bank_transfer', 'cheque', 'upi', 'other')
+  v_normalized_mode := lower(trim(COALESCE(p_payment_mode, 'cash')));
+  IF v_normalized_mode IN ('bank', 'bank_transfer', 'bank transfer', 'neft', 'rtgs', 'imps') THEN
+    v_normalized_mode := 'bank_transfer';
+  ELSIF v_normalized_mode IN ('cheque', 'check') THEN
+    v_normalized_mode := 'cheque';
+  ELSIF v_normalized_mode IN ('upi', 'qr') THEN
+    v_normalized_mode := 'upi';
+  ELSIF v_normalized_mode IN ('cash') THEN
+    v_normalized_mode := 'cash';
+  ELSE
+    v_normalized_mode := 'other';
+  END IF;
+
+  -- 2. Determine next transaction id safely
+  -- Tries sequence first if assigned, else falls back to MAX(id) + 1
+  SELECT COALESCE(
+    CASE 
+      WHEN pg_get_serial_sequence('public.transactions', 'id') IS NOT NULL 
+      THEN nextval(pg_get_serial_sequence('public.transactions', 'id'))
+      ELSE (SELECT COALESCE(MAX(id), 0) + 1 FROM public.transactions)
+    END,
+    1
+  ) INTO v_transaction_id;
+
+  -- 3. Insert into transactions table
   INSERT INTO public.transactions (
+    id,
     school_id,
     type,
     date,
@@ -737,20 +774,21 @@ BEGIN
     user_id,
     created_by
   ) VALUES (
+    v_transaction_id,
     v_school_id,
     'expense',
     p_payment_date,
     p_voucher_number,
     COALESCE(p_remarks, 'Faculty Salary Payment'),
     p_amount,
-    p_transaction_head,
-    p_transaction_main_category,
-    p_transaction_sub_category,
+    COALESCE(p_transaction_head, 'Expenses'),
+    COALESCE(p_transaction_main_category, 'Faculty Expenses'),
+    COALESCE(p_transaction_sub_category, 'Salary'),
     v_user_id,
     v_user_id::text
-  ) RETURNING id INTO v_transaction_id;
+  );
 
-  -- 3. Insert into faculty_expense_payments
+  -- 4. Insert into faculty_expense_payments
   INSERT INTO public.faculty_expense_payments (
     school_id,
     faculty_id,
@@ -771,7 +809,7 @@ BEGIN
     p_payment_date,
     p_voucher_number,
     p_amount,
-    p_payment_mode,
+    v_normalized_mode,
     p_remarks,
     v_user_id,
     v_user_id
