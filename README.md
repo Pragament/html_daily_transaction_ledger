@@ -93,7 +93,23 @@ The original migrations grant permissive anonymous table/storage access. Phase 3
 
 ## Validation scripts
 
-There is no package manifest or unified test command in this repository. `test_phase3_pglite.mjs` is a database regression harness that imports `@electric-sql/pglite` and uses SQL fixtures. Its dependencies and shared-schema prerequisites must be available before running it. `test_batch_writes.js` references `syncService.js`, which is absent from this checkout, so it cannot run as supplied.
+The self-contained milestone suite requires Node.js 20 or newer, with no dependency installation, network, browser, or Supabase credentials:
+
+```sh
+npm test
+```
+
+This executes current `app.js` functions and `dataService.js` in isolated Node VM contexts with mocked cloud calls and in-memory storage. It checks the ₹10,000 closing-balance example, student fee linkage/persistence, previous-year allocation, academic-year boundaries, soft cancellation, salary RPC payloads, and rejected writes. It does not prove browser behavior, actual database posting, RLS, receipt rendering, or synchronization.
+
+The initial baseline has **8 passing tests and 4 executable TODO tests** exposing negative fee acceptance, duplicate receipts, salary mode casing, and missing offline salary ledger posting. TODO tests run their assertions and appear in the output, but do not fail the normal command. New failures outside these explicitly listed defects do fail it. To treat every known defect as a failure (the financial acceptance gate), run:
+
+```sh
+npm run test:strict
+```
+
+The strict command currently exits nonzero with those four failures. When fixing a defect, remove its TODO annotation and keep its regression assertion. See `tests/ledger.test.cjs`. The balance example posts salary amounts as ordinary expense transactions; salary service tests separately verify its current contract, not live SQL execution.
+
+Legacy scripts are excluded from this suite: `test_phase3_pglite.mjs` imports `@electric-sql/pglite` and requires shared-schema SQL files outside this checkout. `test_batch_writes.js` references `syncService.js`, which is absent. They remain historical integration-test material, not passing coverage; repairing/replacing them with isolated database integration tests is a later task.
 
 For a manual smoke check, serve the app, exercise offline transaction entry and reload persistence, then verify authenticated fetch/write flows against a configured development Supabase database. Check fee assignment/payment linkage, attachments, and faculty salary writes separately because their schemas and permissions differ.
 
