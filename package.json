@@ -1,0 +1,9 @@
+{
+  "name": "school-accountant-ledger",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "test:strict": "node tests/run-strict.cjs"
+  },
+  "engines": { "node": ">=20" }
+}
