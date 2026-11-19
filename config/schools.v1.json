@@ -1,0 +1,18 @@
+{
+    "DPSS": {
+        "schoolName": "Delhi Public Secondary School",
+        "status": "active",
+        "supabaseUrl": "https://ndajyhculegzhxqwythx.supabase.co",
+        "anonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kYWp5aGN1bGVnemh4cXd5dGh4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzNTk5NzUsImV4cCI6MjA5OTkzNTk3NX0.2ZYg0msApdnCFsdclNC8AwbBxI6ewiVFEZ96sE8XOIY",
+        "table": "transactions",
+        "bucket": "receipts"
+    },
+    "GHS": {
+        "schoolName": "Greenwood High School",
+        "status": "active",
+        "supabaseUrl": "https://ndajyhculegzhxqwythx.supabase.co",
+        "anonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kYWp5aGN1bGVnemh4cXd5dGh4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzNTk5NzUsImV4cCI6MjA5OTkzNTk3NX0.2ZYg0msApdnCFsdclNC8AwbBxI6ewiVFEZ96sE8XOIY",
+        "table": "transactions",
+        "bucket": "receipts"
+    }
+}

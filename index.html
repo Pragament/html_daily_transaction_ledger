@@ -2064,12 +2064,37 @@
     </div>
 
     <div id="app">
+        <!-- ====== SCHOOL CODE OVERLAY ====== -->
+        <div id="school-code-overlay" class="auth-overlay">
+            <div class="auth-card" style="margin: 80px auto; position: relative;">
+                <span class="auth-logo">🏫</span>
+                <h2 class="auth-title">School Connect</h2>
+                <p class="auth-subtitle">Enter your school code to continue</p>
+
+                <form onsubmit="handleSchoolCodeSubmit(event)">
+                    <div class="auth-form-group">
+                        <label for="school-code-input">School Code</label>
+                        <input type="text" id="school-code-input" required placeholder="e.g. DPSS" autocomplete="off" style="text-transform: uppercase;" />
+                        <div id="school-code-error" class="error-msg" style="display:none; color:#ef4444; font-size:13px; margin-top:8px; line-height: 1.4;"></div>
+                    </div>
+                    <button type="submit" class="auth-btn-submit" id="school-code-submit-btn">Connect</button>
+                </form>
+                <div style="margin-top: 16px; text-align: center;">
+                    <span class="auth-local-link" onclick="bypassAuthToLocal()" style="color: #94a3b8; cursor: pointer; text-decoration: underline; font-size: 13px;" title="Use offline storage locally on this device without syncing">Continue in Offline Local Mode</span>
+                </div>
+            </div>
+        </div>
+
         <!-- ─── LOGIN VIEW ─── -->
         <div id="loginView" style="display: none; position: relative;">
             <!-- Main Login Card -->
             <div class="auth-card" id="loginCard" style="margin: 80px auto; position: relative;">
                 <span class="auth-logo">🔐</span>
                 <h2 class="auth-title">School Accountant Auth</h2>
+                <div id="auth-school-badge" style="margin-bottom: 16px; display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; background: rgba(129, 140, 248, 0.15); border: 1px solid rgba(129, 140, 248, 0.3); border-radius: 20px; font-size: 13px; color: #a5b4fc;">
+                    <span>🏫 <span id="auth-school-name">School</span></span>
+                    <a href="javascript:void(0)" onclick="changeSchool()" style="color: #cbd5e1; text-decoration: underline; margin-left: 4px; font-size: 12px;">Switch</a>
+                </div>
                 <div id="auth-alert" class="auth-alert"
                     style="display:none; margin-bottom: 16px; padding: 12px; border-radius: 6px; font-size: 14px; background: #ef4444; color: white;">
                 </div>
@@ -2134,7 +2159,12 @@
             <!-- ─── HEADER ─── -->
             <header class="app-header">
                 <div>
-                    <h1>📘 School Accountant</h1>
+                    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                        <h1>📘 School Accountant</h1>
+                        <span id="headerSchoolBadge" class="badge" style="cursor: pointer; background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; font-size: 13px; font-weight: 600;" onclick="changeSchool()" title="Click to switch school">
+                            🏫 <span id="headerSchoolName">School</span> <span style="font-size: 11px; opacity: 0.8; text-decoration: underline; margin-left: 4px;">Switch</span>
+                        </span>
+                    </div>
                     <span class="sub">Income &amp; Expense Manager</span>
                 </div>
                 <div class="header-actions">

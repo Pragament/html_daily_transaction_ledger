@@ -8,6 +8,11 @@
             }
         };
 
+        window.App = {
+            supabase: null,
+            school: null
+        };
+
         // ─── Utility: HTML Escaping ───
         function escapeHtml(str) {
             if (str === null || str === undefined) return '';
@@ -19,7 +24,7 @@
                 .replace(/'/g, '&#039;');
         }
 
-        // ─── Load Configuration from .env file ───
+        // ─── Load Configuration from .env file or config.js ───
         async function loadEnvConfig() {
             try {
                 // Primary: Fetch .env directly
@@ -58,15 +63,208 @@
             }
 
             // Fallback: window.APP_CONFIG_ENV if provided
-            if (window.APP_CONFIG_ENV && window.APP_CONFIG_ENV.supabase) {
+            if (window.APP_CONFIG_ENV && window.APP_CONFIG_ENV.supabase && window.APP_CONFIG_ENV.supabase.url !== 'YOUR_SUPABASE_URL') {
                 Object.assign(APP_CONFIG.supabase, window.APP_CONFIG_ENV.supabase);
                 console.log("Configuration loaded from window.APP_CONFIG_ENV fallback.");
                 return;
             }
 
-            console.warn("No Supabase configuration found in .env.");
-            showToast("Configuration not found. Please check your .env file.", "error");
+            console.warn("No static default configuration found in .env or config.js.");
         }
+
+        // ─── Multi-School Architecture ───
+        async function verifyAndConnectSchool(code) {
+            code = (code || '').trim().toUpperCase();
+            const overlay = document.getElementById('school-code-overlay');
+            const errorMsg = document.getElementById('school-code-error');
+            const submitBtn = document.getElementById('school-code-submit-btn');
+
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Connecting...';
+            }
+            if (errorMsg) errorMsg.style.display = 'none';
+
+            try {
+                let schoolConfig = null;
+
+                // 1. Try fetching config/schools.v1.json
+                try {
+                    const response = await fetch('config/schools.v1.json');
+                    if (response.ok) {
+                        const schools = await response.json();
+                        if (schools && schools[code]) {
+                            schoolConfig = schools[code];
+                        }
+                    }
+                } catch (fetchErr) {
+                    console.warn('Could not fetch config/schools.v1.json directly:', fetchErr);
+                }
+
+                // 2. Fallback matching if schools.v1.json was not found
+                if (!schoolConfig && (code === 'DPSS' || code === 'DEFAULT')) {
+                    if (APP_CONFIG.supabase && APP_CONFIG.supabase.url && APP_CONFIG.supabase.url !== 'YOUR_SUPABASE_URL') {
+                        schoolConfig = {
+                            schoolName: code === 'DPSS' ? 'Delhi Public Secondary School' : 'Default School',
+                            status: 'active',
+                            supabaseUrl: APP_CONFIG.supabase.url,
+                            anonKey: APP_CONFIG.supabase.key,
+                            table: APP_CONFIG.supabase.table || 'transactions',
+                            bucket: APP_CONFIG.supabase.bucket || 'receipts'
+                        };
+                    }
+                }
+
+                if (!schoolConfig) {
+                    if (errorMsg) {
+                        errorMsg.innerHTML = "School not found.<br>Please verify the code provided by your school administrator.";
+                        errorMsg.style.display = 'block';
+                    }
+                    if (overlay) overlay.classList.add('active');
+                    localStorage.removeItem('school_accountant_school');
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Connect';
+                    }
+                    return false;
+                }
+
+                if (schoolConfig.status !== 'active') {
+                    if (errorMsg) {
+                        errorMsg.innerHTML = "This school is currently inactive.<br>Contact your administrator.";
+                        errorMsg.style.display = 'block';
+                    }
+                    if (overlay) overlay.classList.add('active');
+                    localStorage.removeItem('school_accountant_school');
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Connect';
+                    }
+                    return false;
+                }
+
+                // Apply school's dedicated Supabase project credentials
+                APP_CONFIG.supabase.url = schoolConfig.supabaseUrl;
+                APP_CONFIG.supabase.key = schoolConfig.anonKey;
+                if (schoolConfig.table) APP_CONFIG.supabase.table = schoolConfig.table;
+                if (schoolConfig.bucket) APP_CONFIG.supabase.bucket = schoolConfig.bucket;
+
+                if (window.supabase && typeof window.supabase.createClient === 'function') {
+                    try {
+                        supabaseClient = window.supabase.createClient(schoolConfig.supabaseUrl, schoolConfig.anonKey);
+                        window.supabaseClient = supabaseClient;
+                        window.App.supabase = supabaseClient;
+                    } catch (clientErr) {
+                        console.error('Failed to create Supabase client for school:', clientErr);
+                    }
+                }
+
+                // Persist active school state
+                window.App.school = {
+                    schoolCode: code,
+                    schoolName: schoolConfig.schoolName,
+                    connectedAt: new Date().toISOString(),
+                    version: 1
+                };
+                localStorage.setItem('school_accountant_school', JSON.stringify(window.App.school));
+
+                // Update UI elements
+                const authSchoolName = document.getElementById('auth-school-name');
+                if (authSchoolName) authSchoolName.textContent = schoolConfig.schoolName;
+                const headerSchoolName = document.getElementById('headerSchoolName');
+                if (headerSchoolName) headerSchoolName.textContent = schoolConfig.schoolName;
+
+                if (overlay) overlay.classList.remove('active');
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Connect';
+                }
+
+                updateSupabaseStatus();
+                return true;
+            } catch (err) {
+                console.error("Error connecting to school:", err);
+                if (errorMsg) {
+                    errorMsg.innerHTML = "An error occurred while connecting. Please try again.";
+                    errorMsg.style.display = 'block';
+                }
+                if (overlay) overlay.classList.add('active');
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Connect';
+                }
+                return false;
+            }
+        }
+
+        window.handleSchoolCodeSubmit = async function(event) {
+            if (event) event.preventDefault();
+            const input = document.getElementById('school-code-input');
+            const code = (input ? input.value : '').trim().toUpperCase();
+
+            if (!code) {
+                const errorMsg = document.getElementById('school-code-error');
+                if (errorMsg) {
+                    errorMsg.textContent = 'Please enter a school code.';
+                    errorMsg.style.display = 'block';
+                }
+                return;
+            }
+
+            const connected = await verifyAndConnectSchool(code);
+            if (connected) {
+                await checkSessionAndSetupAuth();
+            }
+        };
+
+        window.changeSchool = async function() {
+            if (supabaseClient) {
+                try {
+                    await supabaseClient.auth.signOut();
+                } catch (e) {
+                    console.warn("Error signing out during changeSchool", e);
+                }
+            }
+
+            supabaseClient = null;
+            window.supabaseClient = null;
+            currentUser = null;
+            window.currentUser = null;
+            window.App.school = null;
+            window.App.supabase = null;
+
+            localStorage.removeItem('school_accountant_school');
+            localStorage.removeItem('school_accountant_last_sync');
+
+            const dashboardView = document.getElementById('dashboardView');
+            const loginView = document.getElementById('loginView');
+            const overlay = document.getElementById('school-code-overlay');
+            const input = document.getElementById('school-code-input');
+            const errorMsg = document.getElementById('school-code-error');
+
+            if (dashboardView) dashboardView.style.display = 'none';
+            if (loginView) loginView.style.display = 'none';
+            if (errorMsg) errorMsg.style.display = 'none';
+            if (input) input.value = '';
+
+            if (overlay) overlay.classList.add('active');
+            if (input) input.focus();
+        };
+
+        window.bypassAuthToLocal = function() {
+            const overlay = document.getElementById('school-code-overlay');
+            if (overlay) overlay.classList.remove('active');
+            window.App.school = {
+                schoolCode: 'LOCAL',
+                schoolName: 'Offline Demo School',
+                connectedAt: new Date().toISOString()
+            };
+            const headerSchoolName = document.getElementById('headerSchoolName');
+            if (headerSchoolName) headerSchoolName.textContent = 'Offline Demo School';
+            continueOffline();
+        };
+
+        window.verifyAndConnectSchool = verifyAndConnectSchool;
 
         // ─── Auth State ───
         let supabaseAuthListenerAttached = false;
@@ -756,7 +954,10 @@
                 const offlineBanner = document.getElementById('offlineModeBanner');
                 if (offlineBanner) offlineBanner.style.display = 'none';
                 if (dashboardView) dashboardView.style.display = 'none';
-                if (loginView) loginView.style.display = 'block';
+                const overlay = document.getElementById('school-code-overlay');
+                if (!overlay || !overlay.classList.contains('active')) {
+                    if (loginView) loginView.style.display = 'block';
+                }
 
                 if (userProfile) {
                     userProfile.style.display = 'none';
@@ -780,6 +981,11 @@
         async function checkSessionAndSetupAuth() {
             const loginView = document.getElementById('loginView');
             const dashboardView = document.getElementById('dashboardView');
+            const overlay = document.getElementById('school-code-overlay');
+
+            if (overlay && overlay.classList.contains('active')) {
+                return;
+            }
 
             if (!supabaseClient) {
                 console.warn('Supabase client not ready for auth check.');
@@ -7221,14 +7427,15 @@
 
         // ─── Auto-run ───
         async function init() {
-            // Load environment variables from .env
+            // Load environment variables / config.js
             await loadEnvConfig();
 
-            // Supabase auth handles everything directly
             // Set default dates
             const today = new Date().toISOString().slice(0, 10);
-            document.getElementById('incomeDate').value = today;
-            document.getElementById('expenseDate').value = today;
+            const incDate = document.getElementById('incomeDate');
+            const expDate = document.getElementById('expenseDate');
+            if (incDate) incDate.value = today;
+            if (expDate) expDate.value = today;
 
             // Clear student import file input to prevent browser state restoration on reload
             const studentImportInput = document.getElementById('studentCsvImportInput');
@@ -7239,32 +7446,6 @@
             // Load data
             loadData();
 
-            // Load Supabase config
-            loadSupabaseConfig();
-
-            // Initialize synchronization queue service
-
-            // Clean up stale auth tokens from other/old Supabase projects in localStorage
-            try {
-                const targetRef = (APP_CONFIG.supabase && APP_CONFIG.supabase.url) 
-                    ? new URL(APP_CONFIG.supabase.url).hostname.split('.')[0] 
-                    : '';
-                for (let i = localStorage.length - 1; i >= 0; i--) {
-                    const key = localStorage.key(i);
-                    if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
-                        if (targetRef && !key.includes(targetRef)) {
-                            console.log('Clearing old Supabase project session:', key);
-                            localStorage.removeItem(key);
-                        }
-                    }
-                }
-            } catch (e) {
-                console.warn('Error checking old project sessions:', e);
-            }
-
-            // Check session and setup authentication
-            await checkSessionAndSetupAuth();
-
             // Init tabs
             initTabs();
             
@@ -7272,7 +7453,8 @@
             initSubTabs();
 
             // Populate filter main category dropdown
-            populateMainCategoryDropdown(document.getElementById('txFilterMainCategory'), 'all', '');
+            const filterCat = document.getElementById('txFilterMainCategory');
+            if (filterCat) populateMainCategoryDropdown(filterCat, 'all', '');
 
             // Add initial rows
             clearIncomeRows();
@@ -7284,8 +7466,47 @@
             // Update student count
             updateStudentCountDisplay();
 
-            // Auto-sync status
-            updateSupabaseStatus();
+            // ─── Multi-School Connect Flow ───
+            const hash = window.location.hash || '';
+            const isOAuthCallback = hash.includes('access_token=') || hash.includes('error=');
+
+            const schoolDataRaw = localStorage.getItem('school_accountant_school');
+            let storedSchool = null;
+            if (schoolDataRaw) {
+                try {
+                    storedSchool = JSON.parse(schoolDataRaw);
+                } catch (e) {
+                    console.warn("Invalid school data in localStorage.");
+                }
+            }
+
+            if (storedSchool && storedSchool.schoolCode) {
+                const connected = await verifyAndConnectSchool(storedSchool.schoolCode);
+                if (connected) {
+                    await checkSessionAndSetupAuth();
+                    updateSupabaseStatus();
+                } else {
+                    const overlay = document.getElementById('school-code-overlay');
+                    if (overlay) overlay.classList.add('active');
+                }
+            } else if (isOAuthCallback) {
+                // If returned from OAuth redirect and no school recorded, try DPSS default
+                const connected = await verifyAndConnectSchool('DPSS');
+                if (connected) {
+                    await checkSessionAndSetupAuth();
+                    updateSupabaseStatus();
+                }
+            } else {
+                // No school connected -> prompt for School Code
+                const overlay = document.getElementById('school-code-overlay');
+                const loginView = document.getElementById('loginView');
+                const dashboardView = document.getElementById('dashboardView');
+                if (loginView) loginView.style.display = 'none';
+                if (dashboardView) dashboardView.style.display = 'none';
+                if (overlay) overlay.classList.add('active');
+                const codeInput = document.getElementById('school-code-input');
+                if (codeInput) codeInput.focus();
+            }
 
             console.log('📘 School Accountant initialized. Transactions:', transactions.length);
         }
