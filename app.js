@@ -8,6 +8,11 @@
             }
         };
 
+        window.App = {
+            supabase: null,
+            school: null
+        };
+
         // ─── Utility: HTML Escaping ───
         function escapeHtml(str) {
             if (str === null || str === undefined) return '';
@@ -19,7 +24,7 @@
                 .replace(/'/g, '&#039;');
         }
 
-        // ─── Load Configuration from .env file ───
+        // ─── Load Configuration from .env file or config.js ───
         async function loadEnvConfig() {
             try {
                 // Primary: Fetch .env directly
@@ -58,15 +63,208 @@
             }
 
             // Fallback: window.APP_CONFIG_ENV if provided
-            if (window.APP_CONFIG_ENV && window.APP_CONFIG_ENV.supabase) {
+            if (window.APP_CONFIG_ENV && window.APP_CONFIG_ENV.supabase && window.APP_CONFIG_ENV.supabase.url !== 'YOUR_SUPABASE_URL') {
                 Object.assign(APP_CONFIG.supabase, window.APP_CONFIG_ENV.supabase);
                 console.log("Configuration loaded from window.APP_CONFIG_ENV fallback.");
                 return;
             }
 
-            console.warn("No Supabase configuration found in .env.");
-            showToast("Configuration not found. Please check your .env file.", "error");
+            console.warn("No static default configuration found in .env or config.js.");
         }
+
+        // ─── Multi-School Architecture ───
+        async function verifyAndConnectSchool(code) {
+            code = (code || '').trim().toUpperCase();
+            const overlay = document.getElementById('school-code-overlay');
+            const errorMsg = document.getElementById('school-code-error');
+            const submitBtn = document.getElementById('school-code-submit-btn');
+
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Connecting...';
+            }
+            if (errorMsg) errorMsg.style.display = 'none';
+
+            try {
+                let schoolConfig = null;
+
+                // 1. Try fetching config/schools.v1.json
+                try {
+                    const response = await fetch('config/schools.v1.json');
+                    if (response.ok) {
+                        const schools = await response.json();
+                        if (schools && schools[code]) {
+                            schoolConfig = schools[code];
+                        }
+                    }
+                } catch (fetchErr) {
+                    console.warn('Could not fetch config/schools.v1.json directly:', fetchErr);
+                }
+
+                // 2. Fallback matching if schools.v1.json was not found
+                if (!schoolConfig && (code === 'DPSS' || code === 'DEFAULT')) {
+                    if (APP_CONFIG.supabase && APP_CONFIG.supabase.url && APP_CONFIG.supabase.url !== 'YOUR_SUPABASE_URL') {
+                        schoolConfig = {
+                            schoolName: code === 'DPSS' ? 'Delhi Public Secondary School' : 'Default School',
+                            status: 'active',
+                            supabaseUrl: APP_CONFIG.supabase.url,
+                            anonKey: APP_CONFIG.supabase.key,
+                            table: APP_CONFIG.supabase.table || 'transactions',
+                            bucket: APP_CONFIG.supabase.bucket || 'receipts'
+                        };
+                    }
+                }
+
+                if (!schoolConfig) {
+                    if (errorMsg) {
+                        errorMsg.innerHTML = "School not found.<br>Please verify the code provided by your school administrator.";
+                        errorMsg.style.display = 'block';
+                    }
+                    if (overlay) overlay.classList.add('active');
+                    localStorage.removeItem('school_accountant_school');
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Connect';
+                    }
+                    return false;
+                }
+
+                if (schoolConfig.status !== 'active') {
+                    if (errorMsg) {
+                        errorMsg.innerHTML = "This school is currently inactive.<br>Contact your administrator.";
+                        errorMsg.style.display = 'block';
+                    }
+                    if (overlay) overlay.classList.add('active');
+                    localStorage.removeItem('school_accountant_school');
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Connect';
+                    }
+                    return false;
+                }
+
+                // Apply school's dedicated Supabase project credentials
+                APP_CONFIG.supabase.url = schoolConfig.supabaseUrl;
+                APP_CONFIG.supabase.key = schoolConfig.anonKey;
+                if (schoolConfig.table) APP_CONFIG.supabase.table = schoolConfig.table;
+                if (schoolConfig.bucket) APP_CONFIG.supabase.bucket = schoolConfig.bucket;
+
+                if (window.supabase && typeof window.supabase.createClient === 'function') {
+                    try {
+                        supabaseClient = window.supabase.createClient(schoolConfig.supabaseUrl, schoolConfig.anonKey);
+                        window.supabaseClient = supabaseClient;
+                        window.App.supabase = supabaseClient;
+                    } catch (clientErr) {
+                        console.error('Failed to create Supabase client for school:', clientErr);
+                    }
+                }
+
+                // Persist active school state
+                window.App.school = {
+                    schoolCode: code,
+                    schoolName: schoolConfig.schoolName,
+                    connectedAt: new Date().toISOString(),
+                    version: 1
+                };
+                localStorage.setItem('school_accountant_school', JSON.stringify(window.App.school));
+
+                // Update UI elements
+                const authSchoolName = document.getElementById('auth-school-name');
+                if (authSchoolName) authSchoolName.textContent = schoolConfig.schoolName;
+                const headerSchoolName = document.getElementById('headerSchoolName');
+                if (headerSchoolName) headerSchoolName.textContent = schoolConfig.schoolName;
+
+                if (overlay) overlay.classList.remove('active');
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Connect';
+                }
+
+                updateSupabaseStatus();
+                return true;
+            } catch (err) {
+                console.error("Error connecting to school:", err);
+                if (errorMsg) {
+                    errorMsg.innerHTML = "An error occurred while connecting. Please try again.";
+                    errorMsg.style.display = 'block';
+                }
+                if (overlay) overlay.classList.add('active');
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Connect';
+                }
+                return false;
+            }
+        }
+
+        window.handleSchoolCodeSubmit = async function(event) {
+            if (event) event.preventDefault();
+            const input = document.getElementById('school-code-input');
+            const code = (input ? input.value : '').trim().toUpperCase();
+
+            if (!code) {
+                const errorMsg = document.getElementById('school-code-error');
+                if (errorMsg) {
+                    errorMsg.textContent = 'Please enter a school code.';
+                    errorMsg.style.display = 'block';
+                }
+                return;
+            }
+
+            const connected = await verifyAndConnectSchool(code);
+            if (connected) {
+                await checkSessionAndSetupAuth();
+            }
+        };
+
+        window.changeSchool = async function() {
+            if (supabaseClient) {
+                try {
+                    await supabaseClient.auth.signOut();
+                } catch (e) {
+                    console.warn("Error signing out during changeSchool", e);
+                }
+            }
+
+            supabaseClient = null;
+            window.supabaseClient = null;
+            currentUser = null;
+            window.currentUser = null;
+            window.App.school = null;
+            window.App.supabase = null;
+
+            localStorage.removeItem('school_accountant_school');
+            localStorage.removeItem('school_accountant_last_sync');
+
+            const dashboardView = document.getElementById('dashboardView');
+            const loginView = document.getElementById('loginView');
+            const overlay = document.getElementById('school-code-overlay');
+            const input = document.getElementById('school-code-input');
+            const errorMsg = document.getElementById('school-code-error');
+
+            if (dashboardView) dashboardView.style.display = 'none';
+            if (loginView) loginView.style.display = 'none';
+            if (errorMsg) errorMsg.style.display = 'none';
+            if (input) input.value = '';
+
+            if (overlay) overlay.classList.add('active');
+            if (input) input.focus();
+        };
+
+        window.bypassAuthToLocal = function() {
+            const overlay = document.getElementById('school-code-overlay');
+            if (overlay) overlay.classList.remove('active');
+            window.App.school = {
+                schoolCode: 'LOCAL',
+                schoolName: 'Offline Demo School',
+                connectedAt: new Date().toISOString()
+            };
+            const headerSchoolName = document.getElementById('headerSchoolName');
+            if (headerSchoolName) headerSchoolName.textContent = 'Offline Demo School';
+            continueOffline();
+        };
+
+        window.verifyAndConnectSchool = verifyAndConnectSchool;
 
         // ─── Auth State ───
         let supabaseAuthListenerAttached = false;
@@ -756,7 +954,10 @@
                 const offlineBanner = document.getElementById('offlineModeBanner');
                 if (offlineBanner) offlineBanner.style.display = 'none';
                 if (dashboardView) dashboardView.style.display = 'none';
-                if (loginView) loginView.style.display = 'block';
+                const overlay = document.getElementById('school-code-overlay');
+                if (!overlay || !overlay.classList.contains('active')) {
+                    if (loginView) loginView.style.display = 'block';
+                }
 
                 if (userProfile) {
                     userProfile.style.display = 'none';
@@ -780,6 +981,11 @@
         async function checkSessionAndSetupAuth() {
             const loginView = document.getElementById('loginView');
             const dashboardView = document.getElementById('dashboardView');
+            const overlay = document.getElementById('school-code-overlay');
+
+            if (overlay && overlay.classList.contains('active')) {
+                return;
+            }
 
             if (!supabaseClient) {
                 console.warn('Supabase client not ready for auth check.');
@@ -2035,32 +2241,164 @@
             const totalExpense = expenses.reduce((sum, t) => sum + t.amount, 0);
             const closing = openingBal + totalIncome - totalExpense;
             const net = totalIncome - totalExpense;
-            return { openingBal, totalIncome, totalExpense, closing, net, count: activeTxs.length };
+
+            // Bank Deposits: total bankAmount across active income
+            const bankDeposits = income.reduce((sum, t) => sum + (t.bankAmount || 0), 0);
+
+            // Pending Dues: calculate outstanding dues for active students
+            let pendingDues = 0;
+            if (typeof students !== 'undefined' && Array.isArray(students) && students.length > 0 && typeof getStudentFeeDues === 'function') {
+                const ay = (typeof getCurrentAcademicYear === 'function') ? getCurrentAcademicYear() : '2026-27';
+                students.forEach(st => {
+                    try {
+                        const dues = getStudentFeeDues(st, ay);
+                        pendingDues += dues.reduce((s, d) => s + (d.due_amount || 0), 0);
+                    } catch (e) {}
+                });
+            }
+
+            // Category breakdown maps
+            const incByCategory = {};
+            income.forEach(t => {
+                const cat = t.mainCategory || t.head || 'General';
+                incByCategory[cat] = (incByCategory[cat] || 0) + t.amount;
+            });
+
+            const expByCategory = {};
+            expenses.forEach(t => {
+                const cat = t.mainCategory || t.head || 'General';
+                expByCategory[cat] = (expByCategory[cat] || 0) + t.amount;
+            });
+
+            return {
+                openingBal,
+                totalIncome,
+                totalExpense,
+                closing,
+                net,
+                count: activeTxs.length,
+                bankDeposits,
+                pendingDues,
+                incByCategory,
+                expByCategory
+            };
+        }
+
+        function renderCategoryBreakdown(incCats, totalInc, expCats, totalExp) {
+            const incContainer = document.getElementById('dashIncomeCategories');
+            const expContainer = document.getElementById('dashExpenseCategories');
+            const incTotalEl = document.getElementById('dashIncomeCatTotal');
+            const expTotalEl = document.getElementById('dashExpenseCatTotal');
+
+            if (incTotalEl) incTotalEl.textContent = '₹' + totalInc.toFixed(2);
+            if (expTotalEl) expTotalEl.textContent = '₹' + totalExp.toFixed(2);
+
+            if (incContainer) {
+                const incEntries = Object.entries(incCats).sort((a, b) => b[1] - a[1]);
+                if (incEntries.length === 0) {
+                    incContainer.innerHTML = '<div style="color: #94a3b8; font-size: 13px; text-align: center; padding: 12px;">No income recorded yet</div>';
+                } else {
+                    incContainer.innerHTML = incEntries.map(([cat, amt]) => {
+                        const pct = totalInc > 0 ? ((amt / totalInc) * 100).toFixed(1) : '0.0';
+                        return `
+                        <div>
+                            <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; margin-bottom: 4px;">
+                                <span style="color: #1e293b;">${escapeHtml(cat)}</span>
+                                <span style="color: #166534;">₹${amt.toFixed(2)} <span style="color: #64748b; font-size: 11px;">(${pct}%)</span></span>
+                            </div>
+                            <div style="width: 100%; height: 7px; background: #e2e8f0; border-radius: 10px; overflow: hidden;">
+                                <div style="width: ${pct}%; height: 100%; background: linear-gradient(90deg, #10b981 0%, #059669 100%); border-radius: 10px; transition: width 0.4s ease;"></div>
+                            </div>
+                        </div>`;
+                    }).join('');
+                }
+            }
+
+            if (expContainer) {
+                const expEntries = Object.entries(expCats).sort((a, b) => b[1] - a[1]);
+                if (expEntries.length === 0) {
+                    expContainer.innerHTML = '<div style="color: #94a3b8; font-size: 13px; text-align: center; padding: 12px;">No expenses recorded yet</div>';
+                } else {
+                    expContainer.innerHTML = expEntries.map(([cat, amt]) => {
+                        const pct = totalExp > 0 ? ((amt / totalExp) * 100).toFixed(1) : '0.0';
+                        return `
+                        <div>
+                            <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; margin-bottom: 4px;">
+                                <span style="color: #1e293b;">${escapeHtml(cat)}</span>
+                                <span style="color: #991b1b;">₹${amt.toFixed(2)} <span style="color: #64748b; font-size: 11px;">(${pct}%)</span></span>
+                            </div>
+                            <div style="width: 100%; height: 7px; background: #e2e8f0; border-radius: 10px; overflow: hidden;">
+                                <div style="width: ${pct}%; height: 100%; background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%); border-radius: 10px; transition: width 0.4s ease;"></div>
+                            </div>
+                        </div>`;
+                    }).join('');
+                }
+            }
         }
 
         function refreshDashboard() {
             const d = calcDashboard();
-            document.getElementById('dashOpening').textContent = d.openingBal.toFixed(2);
-            document.getElementById('dashIncome').textContent = d.totalIncome.toFixed(2);
-            document.getElementById('dashExpense').textContent = d.totalExpense.toFixed(2);
-            document.getElementById('dashClosing').textContent = d.closing.toFixed(2);
+            const elOpen = document.getElementById('dashOpening');
+            if (elOpen) elOpen.textContent = d.openingBal.toFixed(2);
+            const elInc = document.getElementById('dashIncome');
+            if (elInc) elInc.textContent = d.totalIncome.toFixed(2);
+            const elExp = document.getElementById('dashExpense');
+            if (elExp) elExp.textContent = d.totalExpense.toFixed(2);
+            const elClose = document.getElementById('dashClosing');
+            if (elClose) elClose.textContent = d.closing.toFixed(2);
+
             const netEl = document.getElementById('dashNet');
-            netEl.textContent = d.net.toFixed(2);
-            netEl.className = 'value ' + (d.net >= 0 ? 'positive' : 'negative');
-            document.getElementById('dashCount').textContent = d.count;
+            if (netEl) {
+                netEl.textContent = d.net.toFixed(2);
+                netEl.className = 'value ' + (d.net >= 0 ? 'positive' : 'negative');
+            }
+
+            const elBank = document.getElementById('dashBankDeposits');
+            if (elBank) elBank.textContent = d.bankDeposits.toFixed(2);
+
+            const elDues = document.getElementById('dashPendingDues');
+            if (elDues) elDues.textContent = d.pendingDues.toFixed(2);
+
+            const elCount = document.getElementById('dashCount');
+            if (elCount) elCount.textContent = d.count;
+
+            // Render Real-Time Category Breakdown Charts
+            renderCategoryBreakdown(d.incByCategory, d.totalIncome, d.expByCategory, d.totalExpense);
+
             // update dashboard faculty & pending salary metrics
             if (typeof window.updateDashboardFacultyMetrics === 'function') {
                 window.updateDashboardFacultyMetrics(d.totalExpense);
             }
             // last sync
             const lastSync = localStorage.getItem('school_accountant_last_sync');
-            if (lastSync) {
-                document.getElementById('dashLastSync').textContent = 'Last sync: ' + new Date(parseInt(lastSync))
-                    .toLocaleString();
-            } else {
-                document.getElementById('dashLastSync').textContent = 'Last sync: never';
+            const elSync = document.getElementById('dashLastSync');
+            if (elSync) {
+                if (lastSync) {
+                    elSync.textContent = 'Last sync: ' + new Date(parseInt(lastSync)).toLocaleString();
+                } else {
+                    elSync.textContent = 'Last sync: never';
+                }
             }
         }
+
+        window.handleGlobalYearChange = function(year) {
+            localStorage.setItem('school_accountant_academic_year', year);
+            const feeYearSelects = [
+                'feesOverviewAcademicYear',
+                'feesStatusAcademicYear',
+                'assignAcademicYear',
+                'reportsAcademicYear'
+            ];
+            feeYearSelects.forEach(id => {
+                const el = document.getElementById(id);
+                if (el && el.value !== year) {
+                    el.value = year;
+                    el.dispatchEvent(new Event('change'));
+                }
+            });
+            refreshDashboard();
+            showToast(`📅 Switched Academic Year to ${year}`, 'success');
+        };
 
         function updateLocalStatus() {
             const el = document.getElementById('localStatus');
@@ -2159,13 +2497,48 @@
             </td>
             <td><input type="number" class="inc-amount" value="${data.amount || ''}" step="0.01" placeholder="0.00" /></td>
             <td>
+                <select class="inc-mode" style="padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;">
+                    <option value="Cash" ${data.paymentMode === 'Cash' || (!data.bankAmount && !data.chequeCount) ? 'selected' : ''}>💵 Cash</option>
+                    <option value="Bank" ${data.paymentMode === 'Bank' || (data.bankAmount && !data.chequeCount) ? 'selected' : ''}>🏦 Bank</option>
+                    <option value="Cheque" ${data.paymentMode === 'Cheque' || data.chequeCount ? 'selected' : ''}>📜 Cheque</option>
+                </select>
+            </td>
+            <td>
                 <select class="inc-main-category" style="margin-bottom:4px;"></select>
                 <select class="inc-sub-category" disabled></select>
             </td>
-            <td><input type="file" class="inc-file" accept="image/*,application/pdf" multiple /></td>
+            <td>
+                <div class="file-drop-zone" style="position: relative; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 3px; text-align: center; background: #f8fafc; transition: all 0.2s;" title="Drag & drop file here or click to browse">
+                    <input type="file" class="inc-file" accept="image/*,application/pdf" multiple style="font-size: 11px; max-width: 140px; cursor: pointer;" />
+                </div>
+            </td>
             <td><button class="btn btn-danger btn-xs" onclick="removeIncomeRow(this)">✕</button></td>
           `;
             tbody.appendChild(row);
+
+            // Drag-and-drop support for file attachments in row
+            const dropZone = row.querySelector('.file-drop-zone');
+            const fileInput = row.querySelector('.inc-file');
+            if (dropZone && fileInput) {
+                dropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    dropZone.style.borderColor = '#3b82f6';
+                    dropZone.style.background = '#eff6ff';
+                });
+                dropZone.addEventListener('dragleave', () => {
+                    dropZone.style.borderColor = '#cbd5e1';
+                    dropZone.style.background = '#f8fafc';
+                });
+                dropZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    dropZone.style.borderColor = '#10b981';
+                    dropZone.style.background = '#ecfdf5';
+                    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                        fileInput.files = e.dataTransfer.files;
+                        showToast(`📎 ${e.dataTransfer.files.length} file(s) attached`, 'success');
+                    }
+                });
+            }
 
             const mainSel = row.querySelector('.inc-main-category');
             const subSel = row.querySelector('.inc-sub-category');
@@ -2216,6 +2589,7 @@
                 const ref = row.querySelector('.inc-ref').value.trim();
                 const particulars = row.querySelector('.inc-particulars').value.trim();
                 const amount = parseFloat(row.querySelector('.inc-amount').value);
+                const mode = row.querySelector('.inc-mode') ? row.querySelector('.inc-mode').value : 'Cash';
                 const mainCategory = row.querySelector('.inc-main-category').value;
                 const subCategory = row.querySelector('.inc-sub-category').value;
                 const fileInput = row.querySelector('.inc-file');
@@ -2242,6 +2616,9 @@
                     }
                 }
 
+                const bankAmt = (mode === 'Bank') ? amount : 0;
+                const chqCount = (mode === 'Cheque') ? 1 : 0;
+
                 const txData = {
                     type: 'income',
                     date: date,
@@ -2255,8 +2632,9 @@
                     student: studentObj,
                     academicYear: row.dataset.academicYear || '',
                     feeMonth: row.dataset.feeMonth || '',
-                    bankAmount: 0,
-                    chequeCount: 0,
+                    bankAmount: bankAmt,
+                    chequeCount: chqCount,
+                    paymentMode: mode,
                     attachments: []
                 };
 
@@ -6761,6 +7139,12 @@
             };
         }
 
+        function getActiveSchoolName() {
+            return (window.App && window.App.school && window.App.school.schoolName)
+                ? window.App.school.schoolName
+                : 'Delhi Public Secondary School';
+        }
+
         /**
          * Renders the Red Tuition Fee Receipt (Tuition template).
          */
@@ -6771,7 +7155,7 @@
                 <!-- Header -->
                 <div class="receipt-header">
                     <div class="receipt-school-info">
-                        <div class="receipt-school-name">Delhi Secondary School</div>
+                        <div class="receipt-school-name">${escapeHtml(getActiveSchoolName())}</div>
                         <div class="receipt-school-address">
                             Survey No.239A/1, Kulapur Village,<br>
                             Shadnagar Mandal & District, Telangana
@@ -6887,7 +7271,7 @@
                 <!-- Header -->
                 <div class="receipt-header">
                     <div class="receipt-school-info">
-                        <div class="receipt-school-name">Delhi Secondary School</div>
+                        <div class="receipt-school-name">${escapeHtml(getActiveSchoolName())}</div>
                         <div class="receipt-school-address">
                             Survey No.239A/1, Kulapur Village,<br>
                             Shadnagar Mandal & District, Telangana
@@ -7001,7 +7385,7 @@
                 <!-- Header -->
                 <div class="receipt-header">
                     <div class="receipt-school-info">
-                        <div class="receipt-school-name">Delhi Secondary School</div>
+                        <div class="receipt-school-name">${escapeHtml(getActiveSchoolName())}</div>
                         <div class="receipt-school-address">
                             Survey No.239A/1, Kulapur Village,<br>
                             Shadnagar Mandal & District, Telangana
@@ -7221,14 +7605,15 @@
 
         // ─── Auto-run ───
         async function init() {
-            // Load environment variables from .env
+            // Load environment variables / config.js
             await loadEnvConfig();
 
-            // Supabase auth handles everything directly
             // Set default dates
             const today = new Date().toISOString().slice(0, 10);
-            document.getElementById('incomeDate').value = today;
-            document.getElementById('expenseDate').value = today;
+            const incDate = document.getElementById('incomeDate');
+            const expDate = document.getElementById('expenseDate');
+            if (incDate) incDate.value = today;
+            if (expDate) expDate.value = today;
 
             // Clear student import file input to prevent browser state restoration on reload
             const studentImportInput = document.getElementById('studentCsvImportInput');
@@ -7236,34 +7621,15 @@
                 studentImportInput.value = '';
             }
 
-            // Load data
-            loadData();
-
-            // Load Supabase config
-            loadSupabaseConfig();
-
-            // Initialize synchronization queue service
-
-            // Clean up stale auth tokens from other/old Supabase projects in localStorage
-            try {
-                const targetRef = (APP_CONFIG.supabase && APP_CONFIG.supabase.url) 
-                    ? new URL(APP_CONFIG.supabase.url).hostname.split('.')[0] 
-                    : '';
-                for (let i = localStorage.length - 1; i >= 0; i--) {
-                    const key = localStorage.key(i);
-                    if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
-                        if (targetRef && !key.includes(targetRef)) {
-                            console.log('Clearing old Supabase project session:', key);
-                            localStorage.removeItem(key);
-                        }
-                    }
-                }
-            } catch (e) {
-                console.warn('Error checking old project sessions:', e);
+            // Restore global academic year switcher if saved
+            const storedAY = localStorage.getItem('school_accountant_academic_year');
+            const aySwitcher = document.getElementById('globalAcademicYearSwitcher');
+            if (aySwitcher && storedAY) {
+                aySwitcher.value = storedAY;
             }
 
-            // Check session and setup authentication
-            await checkSessionAndSetupAuth();
+            // Load data
+            loadData();
 
             // Init tabs
             initTabs();
@@ -7272,7 +7638,8 @@
             initSubTabs();
 
             // Populate filter main category dropdown
-            populateMainCategoryDropdown(document.getElementById('txFilterMainCategory'), 'all', '');
+            const filterCat = document.getElementById('txFilterMainCategory');
+            if (filterCat) populateMainCategoryDropdown(filterCat, 'all', '');
 
             // Add initial rows
             clearIncomeRows();
@@ -7284,8 +7651,47 @@
             // Update student count
             updateStudentCountDisplay();
 
-            // Auto-sync status
-            updateSupabaseStatus();
+            // ─── Multi-School Connect Flow ───
+            const hash = window.location.hash || '';
+            const isOAuthCallback = hash.includes('access_token=') || hash.includes('error=');
+
+            const schoolDataRaw = localStorage.getItem('school_accountant_school');
+            let storedSchool = null;
+            if (schoolDataRaw) {
+                try {
+                    storedSchool = JSON.parse(schoolDataRaw);
+                } catch (e) {
+                    console.warn("Invalid school data in localStorage.");
+                }
+            }
+
+            if (storedSchool && storedSchool.schoolCode) {
+                const connected = await verifyAndConnectSchool(storedSchool.schoolCode);
+                if (connected) {
+                    await checkSessionAndSetupAuth();
+                    updateSupabaseStatus();
+                } else {
+                    const overlay = document.getElementById('school-code-overlay');
+                    if (overlay) overlay.classList.add('active');
+                }
+            } else if (isOAuthCallback) {
+                // If returned from OAuth redirect and no school recorded, try DPSS default
+                const connected = await verifyAndConnectSchool('DPSS');
+                if (connected) {
+                    await checkSessionAndSetupAuth();
+                    updateSupabaseStatus();
+                }
+            } else {
+                // No school connected -> prompt for School Code
+                const overlay = document.getElementById('school-code-overlay');
+                const loginView = document.getElementById('loginView');
+                const dashboardView = document.getElementById('dashboardView');
+                if (loginView) loginView.style.display = 'none';
+                if (dashboardView) dashboardView.style.display = 'none';
+                if (overlay) overlay.classList.add('active');
+                const codeInput = document.getElementById('school-code-input');
+                if (codeInput) codeInput.focus();
+            }
 
             console.log('📘 School Accountant initialized. Transactions:', transactions.length);
         }
