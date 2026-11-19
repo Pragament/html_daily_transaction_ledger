@@ -2241,32 +2241,164 @@
             const totalExpense = expenses.reduce((sum, t) => sum + t.amount, 0);
             const closing = openingBal + totalIncome - totalExpense;
             const net = totalIncome - totalExpense;
-            return { openingBal, totalIncome, totalExpense, closing, net, count: activeTxs.length };
+
+            // Bank Deposits: total bankAmount across active income
+            const bankDeposits = income.reduce((sum, t) => sum + (t.bankAmount || 0), 0);
+
+            // Pending Dues: calculate outstanding dues for active students
+            let pendingDues = 0;
+            if (typeof students !== 'undefined' && Array.isArray(students) && students.length > 0 && typeof getStudentFeeDues === 'function') {
+                const ay = (typeof getCurrentAcademicYear === 'function') ? getCurrentAcademicYear() : '2026-27';
+                students.forEach(st => {
+                    try {
+                        const dues = getStudentFeeDues(st, ay);
+                        pendingDues += dues.reduce((s, d) => s + (d.due_amount || 0), 0);
+                    } catch (e) {}
+                });
+            }
+
+            // Category breakdown maps
+            const incByCategory = {};
+            income.forEach(t => {
+                const cat = t.mainCategory || t.head || 'General';
+                incByCategory[cat] = (incByCategory[cat] || 0) + t.amount;
+            });
+
+            const expByCategory = {};
+            expenses.forEach(t => {
+                const cat = t.mainCategory || t.head || 'General';
+                expByCategory[cat] = (expByCategory[cat] || 0) + t.amount;
+            });
+
+            return {
+                openingBal,
+                totalIncome,
+                totalExpense,
+                closing,
+                net,
+                count: activeTxs.length,
+                bankDeposits,
+                pendingDues,
+                incByCategory,
+                expByCategory
+            };
+        }
+
+        function renderCategoryBreakdown(incCats, totalInc, expCats, totalExp) {
+            const incContainer = document.getElementById('dashIncomeCategories');
+            const expContainer = document.getElementById('dashExpenseCategories');
+            const incTotalEl = document.getElementById('dashIncomeCatTotal');
+            const expTotalEl = document.getElementById('dashExpenseCatTotal');
+
+            if (incTotalEl) incTotalEl.textContent = '₹' + totalInc.toFixed(2);
+            if (expTotalEl) expTotalEl.textContent = '₹' + totalExp.toFixed(2);
+
+            if (incContainer) {
+                const incEntries = Object.entries(incCats).sort((a, b) => b[1] - a[1]);
+                if (incEntries.length === 0) {
+                    incContainer.innerHTML = '<div style="color: #94a3b8; font-size: 13px; text-align: center; padding: 12px;">No income recorded yet</div>';
+                } else {
+                    incContainer.innerHTML = incEntries.map(([cat, amt]) => {
+                        const pct = totalInc > 0 ? ((amt / totalInc) * 100).toFixed(1) : '0.0';
+                        return `
+                        <div>
+                            <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; margin-bottom: 4px;">
+                                <span style="color: #1e293b;">${escapeHtml(cat)}</span>
+                                <span style="color: #166534;">₹${amt.toFixed(2)} <span style="color: #64748b; font-size: 11px;">(${pct}%)</span></span>
+                            </div>
+                            <div style="width: 100%; height: 7px; background: #e2e8f0; border-radius: 10px; overflow: hidden;">
+                                <div style="width: ${pct}%; height: 100%; background: linear-gradient(90deg, #10b981 0%, #059669 100%); border-radius: 10px; transition: width 0.4s ease;"></div>
+                            </div>
+                        </div>`;
+                    }).join('');
+                }
+            }
+
+            if (expContainer) {
+                const expEntries = Object.entries(expCats).sort((a, b) => b[1] - a[1]);
+                if (expEntries.length === 0) {
+                    expContainer.innerHTML = '<div style="color: #94a3b8; font-size: 13px; text-align: center; padding: 12px;">No expenses recorded yet</div>';
+                } else {
+                    expContainer.innerHTML = expEntries.map(([cat, amt]) => {
+                        const pct = totalExp > 0 ? ((amt / totalExp) * 100).toFixed(1) : '0.0';
+                        return `
+                        <div>
+                            <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; margin-bottom: 4px;">
+                                <span style="color: #1e293b;">${escapeHtml(cat)}</span>
+                                <span style="color: #991b1b;">₹${amt.toFixed(2)} <span style="color: #64748b; font-size: 11px;">(${pct}%)</span></span>
+                            </div>
+                            <div style="width: 100%; height: 7px; background: #e2e8f0; border-radius: 10px; overflow: hidden;">
+                                <div style="width: ${pct}%; height: 100%; background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%); border-radius: 10px; transition: width 0.4s ease;"></div>
+                            </div>
+                        </div>`;
+                    }).join('');
+                }
+            }
         }
 
         function refreshDashboard() {
             const d = calcDashboard();
-            document.getElementById('dashOpening').textContent = d.openingBal.toFixed(2);
-            document.getElementById('dashIncome').textContent = d.totalIncome.toFixed(2);
-            document.getElementById('dashExpense').textContent = d.totalExpense.toFixed(2);
-            document.getElementById('dashClosing').textContent = d.closing.toFixed(2);
+            const elOpen = document.getElementById('dashOpening');
+            if (elOpen) elOpen.textContent = d.openingBal.toFixed(2);
+            const elInc = document.getElementById('dashIncome');
+            if (elInc) elInc.textContent = d.totalIncome.toFixed(2);
+            const elExp = document.getElementById('dashExpense');
+            if (elExp) elExp.textContent = d.totalExpense.toFixed(2);
+            const elClose = document.getElementById('dashClosing');
+            if (elClose) elClose.textContent = d.closing.toFixed(2);
+
             const netEl = document.getElementById('dashNet');
-            netEl.textContent = d.net.toFixed(2);
-            netEl.className = 'value ' + (d.net >= 0 ? 'positive' : 'negative');
-            document.getElementById('dashCount').textContent = d.count;
+            if (netEl) {
+                netEl.textContent = d.net.toFixed(2);
+                netEl.className = 'value ' + (d.net >= 0 ? 'positive' : 'negative');
+            }
+
+            const elBank = document.getElementById('dashBankDeposits');
+            if (elBank) elBank.textContent = d.bankDeposits.toFixed(2);
+
+            const elDues = document.getElementById('dashPendingDues');
+            if (elDues) elDues.textContent = d.pendingDues.toFixed(2);
+
+            const elCount = document.getElementById('dashCount');
+            if (elCount) elCount.textContent = d.count;
+
+            // Render Real-Time Category Breakdown Charts
+            renderCategoryBreakdown(d.incByCategory, d.totalIncome, d.expByCategory, d.totalExpense);
+
             // update dashboard faculty & pending salary metrics
             if (typeof window.updateDashboardFacultyMetrics === 'function') {
                 window.updateDashboardFacultyMetrics(d.totalExpense);
             }
             // last sync
             const lastSync = localStorage.getItem('school_accountant_last_sync');
-            if (lastSync) {
-                document.getElementById('dashLastSync').textContent = 'Last sync: ' + new Date(parseInt(lastSync))
-                    .toLocaleString();
-            } else {
-                document.getElementById('dashLastSync').textContent = 'Last sync: never';
+            const elSync = document.getElementById('dashLastSync');
+            if (elSync) {
+                if (lastSync) {
+                    elSync.textContent = 'Last sync: ' + new Date(parseInt(lastSync)).toLocaleString();
+                } else {
+                    elSync.textContent = 'Last sync: never';
+                }
             }
         }
+
+        window.handleGlobalYearChange = function(year) {
+            localStorage.setItem('school_accountant_academic_year', year);
+            const feeYearSelects = [
+                'feesOverviewAcademicYear',
+                'feesStatusAcademicYear',
+                'assignAcademicYear',
+                'reportsAcademicYear'
+            ];
+            feeYearSelects.forEach(id => {
+                const el = document.getElementById(id);
+                if (el && el.value !== year) {
+                    el.value = year;
+                    el.dispatchEvent(new Event('change'));
+                }
+            });
+            refreshDashboard();
+            showToast(`📅 Switched Academic Year to ${year}`, 'success');
+        };
 
         function updateLocalStatus() {
             const el = document.getElementById('localStatus');
@@ -2365,13 +2497,48 @@
             </td>
             <td><input type="number" class="inc-amount" value="${data.amount || ''}" step="0.01" placeholder="0.00" /></td>
             <td>
+                <select class="inc-mode" style="padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;">
+                    <option value="Cash" ${data.paymentMode === 'Cash' || (!data.bankAmount && !data.chequeCount) ? 'selected' : ''}>💵 Cash</option>
+                    <option value="Bank" ${data.paymentMode === 'Bank' || (data.bankAmount && !data.chequeCount) ? 'selected' : ''}>🏦 Bank</option>
+                    <option value="Cheque" ${data.paymentMode === 'Cheque' || data.chequeCount ? 'selected' : ''}>📜 Cheque</option>
+                </select>
+            </td>
+            <td>
                 <select class="inc-main-category" style="margin-bottom:4px;"></select>
                 <select class="inc-sub-category" disabled></select>
             </td>
-            <td><input type="file" class="inc-file" accept="image/*,application/pdf" multiple /></td>
+            <td>
+                <div class="file-drop-zone" style="position: relative; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 3px; text-align: center; background: #f8fafc; transition: all 0.2s;" title="Drag & drop file here or click to browse">
+                    <input type="file" class="inc-file" accept="image/*,application/pdf" multiple style="font-size: 11px; max-width: 140px; cursor: pointer;" />
+                </div>
+            </td>
             <td><button class="btn btn-danger btn-xs" onclick="removeIncomeRow(this)">✕</button></td>
           `;
             tbody.appendChild(row);
+
+            // Drag-and-drop support for file attachments in row
+            const dropZone = row.querySelector('.file-drop-zone');
+            const fileInput = row.querySelector('.inc-file');
+            if (dropZone && fileInput) {
+                dropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    dropZone.style.borderColor = '#3b82f6';
+                    dropZone.style.background = '#eff6ff';
+                });
+                dropZone.addEventListener('dragleave', () => {
+                    dropZone.style.borderColor = '#cbd5e1';
+                    dropZone.style.background = '#f8fafc';
+                });
+                dropZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    dropZone.style.borderColor = '#10b981';
+                    dropZone.style.background = '#ecfdf5';
+                    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                        fileInput.files = e.dataTransfer.files;
+                        showToast(`📎 ${e.dataTransfer.files.length} file(s) attached`, 'success');
+                    }
+                });
+            }
 
             const mainSel = row.querySelector('.inc-main-category');
             const subSel = row.querySelector('.inc-sub-category');
@@ -2422,6 +2589,7 @@
                 const ref = row.querySelector('.inc-ref').value.trim();
                 const particulars = row.querySelector('.inc-particulars').value.trim();
                 const amount = parseFloat(row.querySelector('.inc-amount').value);
+                const mode = row.querySelector('.inc-mode') ? row.querySelector('.inc-mode').value : 'Cash';
                 const mainCategory = row.querySelector('.inc-main-category').value;
                 const subCategory = row.querySelector('.inc-sub-category').value;
                 const fileInput = row.querySelector('.inc-file');
@@ -2448,6 +2616,9 @@
                     }
                 }
 
+                const bankAmt = (mode === 'Bank') ? amount : 0;
+                const chqCount = (mode === 'Cheque') ? 1 : 0;
+
                 const txData = {
                     type: 'income',
                     date: date,
@@ -2461,8 +2632,9 @@
                     student: studentObj,
                     academicYear: row.dataset.academicYear || '',
                     feeMonth: row.dataset.feeMonth || '',
-                    bankAmount: 0,
-                    chequeCount: 0,
+                    bankAmount: bankAmt,
+                    chequeCount: chqCount,
+                    paymentMode: mode,
                     attachments: []
                 };
 
@@ -6967,6 +7139,12 @@
             };
         }
 
+        function getActiveSchoolName() {
+            return (window.App && window.App.school && window.App.school.schoolName)
+                ? window.App.school.schoolName
+                : 'Delhi Public Secondary School';
+        }
+
         /**
          * Renders the Red Tuition Fee Receipt (Tuition template).
          */
@@ -6977,7 +7155,7 @@
                 <!-- Header -->
                 <div class="receipt-header">
                     <div class="receipt-school-info">
-                        <div class="receipt-school-name">Delhi Secondary School</div>
+                        <div class="receipt-school-name">${escapeHtml(getActiveSchoolName())}</div>
                         <div class="receipt-school-address">
                             Survey No.239A/1, Kulapur Village,<br>
                             Shadnagar Mandal & District, Telangana
@@ -7093,7 +7271,7 @@
                 <!-- Header -->
                 <div class="receipt-header">
                     <div class="receipt-school-info">
-                        <div class="receipt-school-name">Delhi Secondary School</div>
+                        <div class="receipt-school-name">${escapeHtml(getActiveSchoolName())}</div>
                         <div class="receipt-school-address">
                             Survey No.239A/1, Kulapur Village,<br>
                             Shadnagar Mandal & District, Telangana
@@ -7207,7 +7385,7 @@
                 <!-- Header -->
                 <div class="receipt-header">
                     <div class="receipt-school-info">
-                        <div class="receipt-school-name">Delhi Secondary School</div>
+                        <div class="receipt-school-name">${escapeHtml(getActiveSchoolName())}</div>
                         <div class="receipt-school-address">
                             Survey No.239A/1, Kulapur Village,<br>
                             Shadnagar Mandal & District, Telangana
@@ -7441,6 +7619,13 @@
             const studentImportInput = document.getElementById('studentCsvImportInput');
             if (studentImportInput) {
                 studentImportInput.value = '';
+            }
+
+            // Restore global academic year switcher if saved
+            const storedAY = localStorage.getItem('school_accountant_academic_year');
+            const aySwitcher = document.getElementById('globalAcademicYearSwitcher');
+            if (aySwitcher && storedAY) {
+                aySwitcher.value = storedAY;
             }
 
             // Load data
