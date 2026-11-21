@@ -62,7 +62,6 @@
             window.supabaseClient && 
             window.currentUser && 
             window.currentUser.email && 
-            window.currentUser.email !== 'admin@school.local' && 
             window.currentUser.id && 
             window.currentUser.id !== '00000000-0000-0000-0000-000000000000'
         );

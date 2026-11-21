@@ -1,7 +1,7 @@
 window.APP_CONFIG_ENV = {
     supabase: {
-        url: "YOUR_SUPABASE_URL",
-        key: "YOUR_SUPABASE_ANON_KEY",
+        url: "https://lntvobybgpnsixyxigku.supabase.co",
+        key: "YOUR_SUPABASE_PUBLISHABLE_KEY",
         table: "transactions",
         bucket: "receipts"
     }
