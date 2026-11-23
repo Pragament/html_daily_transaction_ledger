@@ -1,5 +1,0 @@
-html_daily_transaction_ledger
-
-Run: double-click START.bat (or: py -m http.server 8765) then open http://localhost:8765/index.html
-This app has its own login page. Same Supabase project (Kumar-Updated) as the other two apps.
-See School_System_Guide.pdf for roles, password recovery and creating an admin.
