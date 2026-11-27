@@ -332,6 +332,11 @@
         let currentUser = null;
         let userProfileData = null;
 
+        function isDemoOfflineMode() {
+            const u = currentUser || (typeof window !== 'undefined' ? window.currentUser : null);
+            return Boolean(u && u.email === 'admin@school.local');
+        }
+
         const DEFAULT_CATEGORIES = [
             { id: 1, name: 'Fees', parent_id: null, type: 'all' },
             { id: 2, name: 'Registration', parent_id: 1, type: 'all' },
@@ -519,6 +524,34 @@
                     }
                 }
 
+                // Upload local students to Supabase in batches if online
+                if (navigator.onLine && supabaseClient && students.length > 0) {
+                    const BATCH_SIZE = 50;
+                    for (let i = 0; i < students.length; i += BATCH_SIZE) {
+                        const chunk = students.slice(i, i + BATCH_SIZE);
+                        try {
+                            const cleanChunk = chunk.map(s => ({
+                                admission_number: s.admissionNumber,
+                                name: s.name,
+                                roll_number: s.rollNumber || '',
+                                class: s.class || '',
+                                section: s.section || '',
+                                father_name: s.fatherName || '',
+                                phone: s.phone || '',
+                                updated_at: new Date().toISOString()
+                            }));
+                            const { error: studPushErr } = await supabaseClient
+                                .from('students')
+                                .upsert(cleanChunk, { onConflict: 'admission_number' });
+                            if (studPushErr) {
+                                console.warn('Failed to batch upload students to Supabase during sync:', studPushErr);
+                            }
+                        } catch (e) {
+                            console.error('Failed to batch upload students to Supabase:', e);
+                        }
+                    }
+                }
+
                 // Upload local student fee assignments to Supabase in batches if online
                 if (navigator.onLine && supabaseClient && studentFeeAssignments.length > 0) {
                     
@@ -560,21 +593,57 @@
                         .from('students')
                         .select('*');
                     if (!studErr && remoteStuds) {
-                        students = remoteStuds.map(s => ({
-                            admissionNumber: s.admission_number,
-                            name: s.name,
-                            rollNumber: s.roll_number || '',
-                            class: s.class || '',
-                            section: s.section || '',
-                            fatherName: s.father_name || '',
-                            phone: s.phone || ''
-                        }));
-                        saveStudents();
-                        updateStudentCountDisplay();
-                        if (typeof renderStudentDirectory === 'function') {
-                            populateStudentFilters();
-                            renderStudentDirectory();
+                        if (remoteStuds.length > 0) {
+                            // Seed map with existing local students so local-only records are preserved
+                            const studMap = new Map();
+                            students.forEach(s => {
+                                if (s && s.admissionNumber) {
+                                    studMap.set(String(s.admissionNumber).trim(), s);
+                                }
+                            });
+                            // Merge in remote students
+                            remoteStuds.forEach(s => {
+                                if (s && s.admission_number) {
+                                    studMap.set(String(s.admission_number).trim(), {
+                                        id: s.id || null,
+                                        admissionNumber: s.admission_number,
+                                        name: s.name,
+                                        rollNumber: s.roll_number || '',
+                                        class: s.class || '',
+                                        section: s.section || '',
+                                        fatherName: s.father_name || '',
+                                        phone: s.phone || '',
+                                        status: s.status || 'active'
+                                    });
+                                }
+                            });
+                            students = Array.from(studMap.values());
+                            saveStudents();
+                            updateStudentCountDisplay();
+                            if (typeof renderStudentDirectory === 'function') {
+                                populateStudentFilters();
+                                renderStudentDirectory();
+                            }
+                        } else if (students.length > 0 && navigator.onLine) {
+                            // Supabase returned 0 rows, but local students exist: push to Supabase to prevent loss
+                            try {
+                                const cleanChunk = students.map(s => ({
+                                    admission_number: s.admissionNumber,
+                                    name: s.name,
+                                    roll_number: s.rollNumber || '',
+                                    class: s.class || '',
+                                    section: s.section || '',
+                                    father_name: s.fatherName || '',
+                                    phone: s.phone || '',
+                                    updated_at: new Date().toISOString()
+                                }));
+                                await supabaseClient.from('students').upsert(cleanChunk, { onConflict: 'admission_number' });
+                            } catch (e) {
+                                console.warn('Failed to push local students to empty remote table:', e);
+                            }
                         }
+                    } else if (studErr) {
+                        console.warn('Could not sync students from Supabase:', studErr);
                     }
                 } else {
                     console.log("[Sync] Skipping fetching students since school_accountant_students_cleared is true");
@@ -717,9 +786,12 @@
                                 mergedMap.set(key, {
                                     id: remoteAssign.id,
                                     student_id: remoteAssign.student_id,
+                                    student_uuid: remoteAssign.student_uuid || null,
                                     academic_year: remoteAssign.academic_year,
                                     fee_category_id: remoteAssign.fee_category_id,
                                     assigned_amount: parseFloat(remoteAssign.assigned_amount) || 0,
+                                    discount_amount: parseFloat(remoteAssign.discount_amount) || 0,
+                                    due_date: remoteAssign.due_date || null,
                                     remarks: remoteAssign.remarks || ''
                                 });
                             }
@@ -739,11 +811,23 @@
                         .select('*');
                     if (!paymentErr && remotePayments) {
                         feePayments = remotePayments.map(p => ({
+                            id: p.id || null,
                             transaction_id: p.transaction_id,
+                            student_id: p.student_id || null,
                             student_admission_number: p.student_admission_number,
+                            fee_assignment_id: p.fee_assignment_id || null,
+                            fee_category_id: p.fee_category_id || null,
                             academic_year: p.academic_year,
-                            fee_month: p.fee_month,
-                            fee_type: p.fee_type
+                            fee_month: p.fee_month || '',
+                            fee_type: p.fee_type || '',
+                            amount: p.amount !== undefined && p.amount !== null ? parseFloat(p.amount) : null,
+                            payment_date: p.payment_date || null,
+                            payment_mode: p.payment_mode || 'cash',
+                            receipt_number: p.receipt_number || '',
+                            reference_number: p.reference_number || '',
+                            remarks: p.remarks || '',
+                            status: p.status || 'completed',
+                            created_by: p.created_by || null
                         }));
                         localStorage.setItem(FEE_PAYMENTS_KEY, JSON.stringify(feePayments));
                     }
@@ -751,7 +835,7 @@
                     console.warn("Could not sync fee payments metadata from Supabase:", paymentErr);
                 }
 
-                // 4.95. Fetch faculty expense payments
+                // 4.95. Fetch faculty expense payments & categories
                 try {
                     const { data: remoteFacultyPayments, error: fPayErr } = await supabaseClient
                         .from('faculty_expense_payments')
@@ -768,6 +852,9 @@
                             });
                             localStorage.setItem('school_accountant_faculty_payments', JSON.stringify(merged));
                         } catch (mErr) {}
+                    }
+                    if (window.DataService && typeof window.DataService.getFacultyExpenseCategories === 'function') {
+                        window.facultyExpenseCategoriesCache = await window.DataService.getFacultyExpenseCategories({ includeInactive: false });
                     }
                 } catch (fPayErr) {
                     console.warn("Could not sync faculty expense payments from Supabase:", fPayErr);
@@ -796,6 +883,9 @@
                             chequeCount: rt.cheque_count || 0,
                             mainCategory: rt.main_category,
                             subCategory: rt.sub_category,
+                            paymentMode: rt.payment_mode || ((rt.cheque_count > 0) ? 'cheque' : ((rt.bank_amount > 0) ? 'bank_transfer' : 'cash')),
+                            studentId: rt.student_id || null,
+                            facultyId: rt.faculty_id || null,
                             tags: rt.tags || [],
                             createdBy: rt.created_by,
                             createdAt: rt.created_at,
@@ -806,12 +896,17 @@
                             attachments: rt.attachments || []
                         };
 
-                        // Stitch fee metadata back in-memory from fee_payments
+                        // Stitch fee metadata back in-memory from fee_payments or student_id
                         const paymentMeta = feePayments.find(fp => fp.transaction_id === rt.id);
                         if (paymentMeta) {
-                            mappedTx.student = students.find(s => s.admissionNumber === paymentMeta.student_admission_number);
+                            mappedTx.student = students.find(s => (paymentMeta.student_id && s.id === paymentMeta.student_id) || s.admissionNumber === paymentMeta.student_admission_number);
+                            mappedTx.studentId = mappedTx.student?.id || paymentMeta.student_id || mappedTx.studentId;
                             mappedTx.academicYear = paymentMeta.academic_year;
                             mappedTx.feeMonth = paymentMeta.fee_month;
+                            if (paymentMeta.payment_mode) mappedTx.paymentMode = paymentMeta.payment_mode;
+                            if (paymentMeta.reference_number) mappedTx.paymentReference = paymentMeta.reference_number;
+                        } else if (rt.student_id) {
+                            mappedTx.student = students.find(s => s.id === rt.student_id) || null;
                         }
 
                         // Stitch faculty metadata back in-memory from faculty payments & directory
@@ -823,8 +918,10 @@
                             const localTx = transactions[localIdx];
                             const localTime = new Date(localTx.updatedAt || 0).getTime();
                             const remoteTime = new Date(rt.updated_at || 0).getTime();
-                            if (remoteTime > localTime) {
-                                if (localTx && localTx.attachments) {
+                            if (remoteTime >= localTime || localTx._receiptMeta || localTx._printedCount) {
+                                if (localTx && localTx.attachments && localTx.attachments.length > 0 && (!mappedTx.attachments || mappedTx.attachments.length === 0)) {
+                                    mappedTx.attachments = localTx.attachments;
+                                } else if (localTx && localTx.attachments) {
                                     mappedTx.attachments = mappedTx.attachments.map(rmA => {
                                         const matchedLoc = localTx.attachments.find(locA => locA.name === rmA.name && locA.size === rmA.size);
                                         if (matchedLoc && matchedLoc.data) {
@@ -833,7 +930,11 @@
                                         return rmA;
                                     });
                                 }
-                                transactions[localIdx] = mappedTx;
+                                if (localTx && localTx._receiptMeta) mappedTx._receiptMeta = localTx._receiptMeta;
+                                if (localTx && localTx._printedCount) mappedTx._printedCount = localTx._printedCount;
+                                if (remoteTime > localTime) {
+                                    transactions[localIdx] = mappedTx;
+                                }
                             }
                         }
                     });
@@ -1451,6 +1552,9 @@
                 cheque_count: txData.chequeCount,
                 main_category: txData.mainCategory,
                 sub_category: txData.subCategory,
+                payment_mode: txData.paymentMode || null,
+                student_id: txData.studentId || (txData.student && txData.student.id) || null,
+                faculty_id: txData.facultyId || (txData.faculty && txData.faculty.id) || null,
                 tags: txData.tags || [],
                 created_by: txData.createdBy,
                 created_at: txData.createdAt,
@@ -1485,30 +1589,34 @@
 
             if (tx.type === 'income' && tx.mainCategory === 'Fees' && tx.student && tx.student.admissionNumber) {
                 if (tx.isDeleted) {
-                    try {
-                        await supabaseClient
-                            .from('fee_payments')
-                            .delete()
-                            .eq('transaction_id', tx.id);
-                    } catch (e) {
-                        console.warn("Could not delete from fee_payments:", e);
+                    const { error: delFeeErr } = await supabaseClient
+                        .from('fee_payments')
+                        .update({ status: 'reversed' })
+                        .eq('transaction_id', tx.id);
+                    if (delFeeErr) {
+                        console.warn("Could not mark fee_payments reversed:", delFeeErr);
                     }
                 } else {
                     const feeData = {
                         transaction_id: tx.id,
+                        student_id: tx.student.id || tx.studentId || null,
                         student_admission_number: tx.student.admissionNumber,
                         academic_year: tx.academicYear || getCurrentAcademicYear(tx.date),
                         fee_month: tx.feeMonth || extractMonthFromParticulars(tx.particulars) || '',
-                        fee_type: tx.subCategory || ''
+                        fee_type: tx.subCategory || '',
+                        amount: Number(tx.amount),
+                        payment_date: tx.date,
+                        payment_mode: (window.DataService && window.DataService.normalizePaymentMode)
+                            ? window.DataService.normalizePaymentMode(tx.paymentMode || 'cash')
+                            : 'cash',
+                        receipt_number: tx.reference || null,
+                        remarks: tx.particulars || null,
+                        status: 'completed'
                     };
-                    try {
-                        const { error: feeErr } = await supabaseClient
-                            .from('fee_payments')
-                            .upsert(feeData);
-                        if (feeErr) throw feeErr;
-                    } catch (e) {
-                        console.warn("Failed to upsert fee payment:", e);
-                    }
+                    const { error: feeErr } = await supabaseClient
+                        .from('fee_payments')
+                        .upsert(feeData);
+                    if (feeErr) throw feeErr;
                 }
             } else if (tx.id) {
                 try {
@@ -1541,9 +1649,13 @@
         }
 
         async function pushOrQueueMutation(action, tx, rev) {
-            if (!supabaseClient || !supaConfig) {
-                showToast("Database disconnected. Cannot save.", "error");
-                throw new Error("Offline");
+            // Explicit Demo Offline Mode works locally without Supabase
+            if (currentUser && currentUser.email === 'admin@school.local') {
+                return;
+            }
+            if (!supabaseClient || !supaConfig || !navigator.onLine) {
+                showToast("Database disconnected or offline. Cannot persist financial record.", "error");
+                throw new Error("Database disconnected");
             }
             try {
                 await uploadTransactionAndRevision(tx, rev, action);
@@ -1551,7 +1663,10 @@
                 updateSupabaseStatus();
             } catch (e) {
                 console.error("Direct upload failed:", e);
-                showToast("Database Error: " + (e.message || e), "error");
+                const msg = (window.DataService && window.DataService.formatSupabaseError)
+                    ? window.DataService.formatSupabaseError(e, e.message || e)
+                    : (e.message || e);
+                showToast("Database Error: " + msg, "error", 5000);
                 throw e;
             }
         }
@@ -1582,26 +1697,21 @@
                         if (nameEl) nameEl.textContent = data.full_name;
                     }
 
-                    // Auto-ensure public.users and public.app_access for consistent multi-user permissions
+                    // Verify Ledger access strictly from database (do not auto-escalate role on client)
                     if (user.email !== 'admin@school.local') {
                         try {
-                            await supabaseClient.from('users').upsert({
-                                id: user.id,
-                                email: user.email
-                            }, { onConflict: 'id' });
-
-                            const { data: schoolData } = await supabaseClient.from('schools').select('id').limit(1).maybeSingle();
-                            const schoolId = schoolData?.id || '00000000-0000-0000-0000-000000000001';
-
-                            await supabaseClient.from('app_access').upsert({
-                                user_id: user.id,
-                                school_id: schoolId,
-                                app_name: 'ledger',
-                                app_role: 'accountant',
-                                is_active: true
-                            }, { onConflict: 'user_id,school_id,app_name' });
+                            const { data: accessRow } = await supabaseClient
+                                .from('app_access')
+                                .select('app_role, is_active, school_id')
+                                .eq('user_id', user.id)
+                                .eq('app_name', 'ledger')
+                                .maybeSingle();
+                            window.currentLedgerAccess = accessRow || null;
+                            if (!accessRow || accessRow.is_active !== true) {
+                                console.warn('Authenticated user has no active Ledger role in public.app_access.');
+                            }
                         } catch (accessErr) {
-                            console.warn("Could not ensure app_access for user:", accessErr);
+                            console.warn('Could not read app_access for user:', accessErr);
                         }
                     }
                 }
@@ -1713,6 +1823,21 @@
         function stitchSingleTransactionFaculty(t, facultyData) {
             if (!t) return;
             const { facultyList, facultyPayments } = facultyData || getLocalFacultyData();
+
+            // 0. Direct permanent UUID linkage on transaction
+            if (t.facultyId) {
+                const directFac = facultyList.find(f => f.id && String(f.id).toLowerCase() === String(t.facultyId).toLowerCase());
+                if (directFac) {
+                    t.faculty = {
+                        id: directFac.id,
+                        name: directFac.name || directFac.faculty_name,
+                        employee_id: directFac.employee_id,
+                        department: directFac.department || '',
+                        designation: directFac.designation || ''
+                    };
+                    return;
+                }
+            }
             
             // 1. Match from faculty payments cache by transaction_id or voucher_number / reference
             const refTrim = (t.reference || '').trim().toLowerCase();
@@ -2037,6 +2162,8 @@
             feePayments = feePayments.filter(fp => fp.transaction_id !== id);
             saveData();
             logActivity('Archive Transaction', id, `Archived transaction (soft delete) for ID: ${id}`);
+            if (typeof refreshFeesUI === 'function') refreshFeesUI();
+            if (typeof window.updateDashboardFacultyMetrics === 'function') window.updateDashboardFacultyMetrics();
         }
 
         function updateTransaction(id, updates) {
@@ -2117,6 +2244,26 @@
             // Filter by soft deletes
             if (!filters.showDeleted) {
                 list = list.filter(t => !t.isDeleted);
+            }
+
+            // Explicit Student / Admission No filter
+            if (filters.studentQuery) {
+                const sq = filters.studentQuery.trim().toLowerCase();
+                list = list.filter(t => t.student && (
+                    (t.student.name && t.student.name.toLowerCase().includes(sq)) ||
+                    (t.student.admissionNumber && t.student.admissionNumber.toLowerCase().includes(sq)) ||
+                    (t.student.rollNumber && t.student.rollNumber.toLowerCase().includes(sq))
+                ));
+            }
+
+            // Explicit Faculty / Employee ID filter
+            if (filters.facultyQuery) {
+                const fq = filters.facultyQuery.trim().toLowerCase();
+                list = list.filter(t => t.faculty && (
+                    (t.faculty.name && t.faculty.name.toLowerCase().includes(fq)) ||
+                    (t.faculty.employee_id && t.faculty.employee_id.toLowerCase().includes(fq)) ||
+                    (t.faculty.department && t.faculty.department.toLowerCase().includes(fq))
+                ));
             }
 
             // Parse search term (particulars, reference, @student, #tag)
@@ -2416,24 +2563,50 @@
         }
 
         // ════════════════════════════════════════════════════════════════
-        //  INCOME BULK
+        //  INCOME BULK + INTEGRATED STUDENT FEE COLLECTION
         // ════════════════════════════════════════════════════════════════
         let incomeRowCount = 0;
+        let isSubmittingIncomeBulk = false;
+        window._activeIncomeEntryMode = 'general';
+
+        window.switchIncomeEntryMode = function(mode) {
+            const target = mode === 'student-fee' ? 'student-fee' : 'general';
+            window._activeIncomeEntryMode = target;
+            const btnGen = document.getElementById('incModeBtnGeneral');
+            const btnFee = document.getElementById('incModeBtnStudentFee');
+            const genControls = document.getElementById('incomeGeneralControls');
+            const genPanel = document.getElementById('incomeGeneralPanel');
+            const feePanel = document.getElementById('incomeStudentFeePanel');
+
+            if (btnGen) btnGen.classList.toggle('active', target === 'general');
+            if (btnFee) btnFee.classList.toggle('active', target === 'student-fee');
+            if (genControls) genControls.style.display = target === 'general' ? 'flex' : 'none';
+            if (genPanel) genPanel.style.display = target === 'general' ? 'block' : 'none';
+            if (feePanel) feePanel.style.display = target === 'student-fee' ? 'block' : 'none';
+
+            if (target === 'student-fee') {
+                initIncomeStudentFeePanel();
+            }
+        };
 
         function updateIncomeAttachmentColumnVisibility() {
             const table = document.getElementById('incomeTable');
             if (!table) return;
             const rows = table.querySelectorAll('#incomeTableBody tr');
             const ths = table.querySelectorAll('thead th');
-            const attachmentTh = ths[4]; // 5th th (Attachment)
+            const attachmentTh = ths[5]; // 6th th (Attachment)
 
             let allFees = true;
-            let hasRows = rows.length > 0;
+            const hasRows = rows.length > 0;
 
             rows.forEach(row => {
                 const mainSel = row.querySelector('.inc-main-category');
                 if (mainSel && mainSel.value !== 'Fees') {
                     allFees = false;
+                }
+                const hintEl = row.querySelector('.inc-fee-hint');
+                if (hintEl) {
+                    hintEl.style.display = (mainSel && mainSel.value === 'Fees' && !row.dataset.studentUuid) ? 'flex' : 'none';
                 }
             });
 
@@ -2455,11 +2628,7 @@
                         const fileTd = fileInput.closest('td');
                         if (fileTd) {
                             fileTd.style.display = '';
-                            if (mainSel && mainSel.value === 'Fees') {
-                                fileInput.style.display = 'none';
-                            } else {
-                                fileInput.style.display = '';
-                            }
+                            fileInput.style.display = (mainSel && mainSel.value === 'Fees') ? 'none' : '';
                         }
                     }
                 });
@@ -2478,6 +2647,7 @@
                 row.dataset.tags = "[]";
             }
             if (data.student) {
+                if (data.student.id) row.dataset.studentUuid = data.student.id;
                 row.dataset.studentAdmission = data.student.admissionNumber;
                 row.dataset.studentName = data.student.name;
                 row.dataset.studentRoll = data.student.rollNumber || '';
@@ -2490,17 +2660,23 @@
             }
 
             row.innerHTML = `
-            <td><input type="text" class="inc-ref" value="${data.reference || ''}" placeholder="Receipt No." /></td>
+            <td><input type="text" class="inc-ref" value="${escapeHtml(data.reference || '')}" placeholder="Receipt No." /></td>
             <td>
-                <input type="text" class="inc-particulars" value="${data.particulars || ''}" placeholder="Description" />
+                <input type="text" class="inc-particulars" value="${escapeHtml(data.particulars || '')}" placeholder="Description (@category #tag)" />
                 <div class="row-badges" style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;"></div>
+                <div class="inc-fee-hint" style="display:none; margin-top:4px; align-items:center; gap:6px; font-size:11px; color:#1d4ed8; background:#eff6ff; padding:3px 6px; border-radius:6px;">
+                    <span>🎓 Student fee link required:</span>
+                    <button type="button" class="btn btn-outline btn-xs" onclick="switchIncomeEntryMode('student-fee')" style="padding:1px 6px; font-size:10px;">Open Student Fee Form</button>
+                </div>
             </td>
-            <td><input type="number" class="inc-amount" value="${data.amount || ''}" step="0.01" placeholder="0.00" /></td>
+            <td><input type="number" class="inc-amount" value="${data.amount || ''}" min="0.01" step="0.01" placeholder="0.00" /></td>
             <td>
-                <select class="inc-mode" style="padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;">
-                    <option value="Cash" ${data.paymentMode === 'Cash' || (!data.bankAmount && !data.chequeCount) ? 'selected' : ''}>💵 Cash</option>
-                    <option value="Bank" ${data.paymentMode === 'Bank' || (data.bankAmount && !data.chequeCount) ? 'selected' : ''}>🏦 Bank</option>
-                    <option value="Cheque" ${data.paymentMode === 'Cheque' || data.chequeCount ? 'selected' : ''}>📜 Cheque</option>
+                <select class="inc-mode" style="padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px;">
+                    <option value="Cash" ${!data.paymentMode || data.paymentMode === 'Cash' || data.paymentMode === 'cash' ? 'selected' : ''}>💵 Cash</option>
+                    <option value="Bank" ${data.paymentMode === 'Bank' || data.paymentMode === 'bank_transfer' || (data.bankAmount && !data.chequeCount) ? 'selected' : ''}>🏦 Bank</option>
+                    <option value="UPI" ${data.paymentMode === 'UPI' || data.paymentMode === 'upi' ? 'selected' : ''}>📱 UPI</option>
+                    <option value="Cheque" ${data.paymentMode === 'Cheque' || data.paymentMode === 'cheque' || data.chequeCount ? 'selected' : ''}>📜 Cheque</option>
+                    <option value="Other" ${data.paymentMode === 'Other' || data.paymentMode === 'other' ? 'selected' : ''}>🔹 Other</option>
                 </select>
             </td>
             <td>
@@ -2512,7 +2688,7 @@
                     <input type="file" class="inc-file" accept="image/*,application/pdf" multiple style="font-size: 11px; max-width: 140px; cursor: pointer;" />
                 </div>
             </td>
-            <td><button class="btn btn-danger btn-xs" onclick="removeIncomeRow(this)">✕</button></td>
+            <td><button type="button" class="btn btn-danger btn-xs" onclick="removeIncomeRow(this)">✕</button></td>
           `;
             tbody.appendChild(row);
 
@@ -2545,6 +2721,7 @@
 
             populateMainCategoryDropdown(mainSel, 'income', data.mainCategory || '');
             populateSubCategoryDropdown(subSel, data.mainCategory || '', data.subCategory || '');
+            mainSel.addEventListener('change', updateIncomeAttachmentColumnVisibility);
             renderRowBadges(row);
             updateIncomeAttachmentColumnVisibility();
         }
@@ -2555,14 +2732,22 @@
             updateIncomeAttachmentColumnVisibility();
         }
 
-        function submitIncomeBulk() {
+        async function submitIncomeBulk() {
+            if (isSubmittingIncomeBulk) {
+                showToast('Income submission already in progress...', 'info');
+                return;
+            }
+            if (!currentUser) {
+                showToast('Your session has expired. Please sign in again.', 'error');
+                return;
+            }
             const date = document.getElementById('incomeDate').value;
             if (!date) { showToast('Please select a date.', 'error'); return; }
+
             const openingInput = document.getElementById('incomeOpening');
-            const openingVal = parseFloat(openingInput.value);
+            const openingVal = parseFloat(openingInput ? openingInput.value : '');
             if (!isNaN(openingVal) && openingVal !== 0) {
-                // add opening balance as income
-                addTransaction({
+                const openCreated = await addTransaction({
                     type: 'income',
                     date: date,
                     reference: 'OPEN',
@@ -2576,124 +2761,116 @@
                     chequeCount: 0,
                     attachments: []
                 });
-                openingInput.value = '';
-                showToast('✅ Opening balance added: ₹' + openingVal.toFixed(2), 'success');
+                if (openCreated) {
+                    openingInput.value = '';
+                    showToast('✅ Opening balance added: ₹' + openingVal.toFixed(2), 'success');
+                }
             }
 
-            const rows = document.querySelectorAll('#incomeTableBody tr');
-            let added = 0;
-            const promises = [];
-            const feeTxIds = []; // Track fee transaction IDs for auto-receipt
-
-            rows.forEach(row => {
-                const ref = row.querySelector('.inc-ref').value.trim();
-                const particulars = row.querySelector('.inc-particulars').value.trim();
-                const amount = parseFloat(row.querySelector('.inc-amount').value);
+            const rows = Array.from(document.querySelectorAll('#incomeTableBody tr'));
+            const prepared = [];
+            for (const row of rows) {
+                const ref = (row.querySelector('.inc-ref')?.value || '').trim();
+                const particulars = (row.querySelector('.inc-particulars')?.value || '').trim();
+                const amount = parseFloat(row.querySelector('.inc-amount')?.value);
                 const mode = row.querySelector('.inc-mode') ? row.querySelector('.inc-mode').value : 'Cash';
-                const mainCategory = row.querySelector('.inc-main-category').value;
-                const subCategory = row.querySelector('.inc-sub-category').value;
+                const mainCategory = row.querySelector('.inc-main-category')?.value || '';
+                const subCategory = row.querySelector('.inc-sub-category')?.value || '';
                 const fileInput = row.querySelector('.inc-file');
 
-                const tagsList = row.dataset.tags ? JSON.parse(row.dataset.tags) : [];
-                let studentObj = null;
-                if (row.dataset.studentAdmission) {
-                    studentObj = {
-                        admissionNumber: row.dataset.studentAdmission,
-                        name: row.dataset.studentName,
-                        rollNumber: row.dataset.studentRoll || ''
-                    };
+                if (!particulars && (isNaN(amount) || amount === 0) && !mainCategory && rows.length > 1) {
+                    continue;
                 }
-
-                if (!ref || !particulars || isNaN(amount) || amount === 0) {
+                if (!ref || !particulars || isNaN(amount) || amount <= 0) {
+                    showToast('Please enter valid Receipt No, Particulars, and positive Amount (> 0) for active rows.', 'error');
                     return;
                 }
+                if (mainCategory === 'Fees') {
+                    showToast('🎓 Please use "New Student Fee Collection" mode above to record Student Fee payments linked to an Admission No & Assignment.', 'warning', 6000);
+                    switchIncomeEntryMode('student-fee');
+                    return;
+                }
+                prepared.push({
+                    row, ref, particulars, amount, mode, mainCategory, subCategory, fileInput,
+                    tagsList: row.dataset.tags ? JSON.parse(row.dataset.tags) : []
+                });
+            }
 
-                const filePromises = [];
-                // Only process file attachments for non-fee categories
-                if (mainCategory !== 'Fees' && fileInput && fileInput.files.length > 0) {
-                    for (let f of fileInput.files) {
-                        filePromises.push(readFileAsBase64(f));
+            if (prepared.length === 0) {
+                if (!isNaN(openingVal) && openingVal !== 0) {
+                    renderIncomeList(); renderTransactions(); refreshDashboard(); updatePreviewCounts();
+                    return;
+                }
+                showToast('Please fill in Receipt No., Particulars, and Amount.', 'error');
+                return;
+            }
+
+            isSubmittingIncomeBulk = true;
+            const submitBtn = document.getElementById('incomeSubmitAllBtn');
+            const origHtml = submitBtn ? submitBtn.innerHTML : '✅ Submit All';
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '⏳ Saving...';
+            }
+
+            let added = 0;
+            const failed = [];
+            try {
+                for (const item of prepared) {
+                    try {
+                        let attachData = [];
+                        if (item.fileInput && item.fileInput.files.length > 0) {
+                            const results = await Promise.all(Array.from(item.fileInput.files).map(f => readFileAsBase64(f)));
+                            attachData = results.map((data, i) => ({
+                                name: item.fileInput.files[i].name,
+                                type: item.fileInput.files[i].type,
+                                data: data,
+                                size: item.fileInput.files[i].size
+                            }));
+                        }
+                        const normMode = item.mode.toLowerCase() === 'bank' ? 'bank_transfer' : item.mode.toLowerCase();
+                        const bankAmt = ['bank_transfer', 'upi', 'cheque'].includes(normMode) ? item.amount : 0;
+                        const chqCount = normMode === 'cheque' ? 1 : 0;
+
+                        const createdTx = await addTransaction({
+                            type: 'income',
+                            date: date,
+                            reference: item.ref,
+                            particulars: item.particulars,
+                            amount: item.amount,
+                            head: item.mainCategory || 'General',
+                            mainCategory: item.mainCategory || 'General',
+                            subCategory: item.subCategory || '',
+                            tags: [...new Set([...item.tagsList, normMode])],
+                            bankAmount: bankAmt,
+                            chequeCount: chqCount,
+                            paymentMode: normMode,
+                            attachments: attachData
+                        });
+                        if (!createdTx) throw new Error(`Failed saving income receipt ${item.ref}`);
+                        added++;
+                    } catch (e) {
+                        failed.push(`${item.ref}: ${e.message || e}`);
                     }
                 }
 
-                const bankAmt = (mode === 'Bank') ? amount : 0;
-                const chqCount = (mode === 'Cheque') ? 1 : 0;
-
-                const txData = {
-                    type: 'income',
-                    date: date,
-                    reference: ref,
-                    particulars: particulars,
-                    amount: amount,
-                    head: mainCategory || 'General',
-                    mainCategory: mainCategory || 'General',
-                    subCategory: subCategory || '',
-                    tags: tagsList,
-                    student: studentObj,
-                    academicYear: row.dataset.academicYear || '',
-                    feeMonth: row.dataset.feeMonth || '',
-                    bankAmount: bankAmt,
-                    chequeCount: chqCount,
-                    paymentMode: mode,
-                    attachments: []
-                };
-
-                if (filePromises.length > 0) {
-                    const p = Promise.all(filePromises).then(async results => {
-                        const attachData = results.map((data, i) => ({
-                            name: fileInput.files[i].name,
-                            type: fileInput.files[i].type,
-                            data: data,
-                            size: fileInput.files[i].size
-                        }));
-                        txData.attachments = attachData;
-                        const createdTx = await addTransaction(txData);
-                        if (createdTx) {
-                            if (mainCategory === 'Fees') feeTxIds.push(createdTx.id);
-                            added++;
-                        }
-                    });
-                    promises.push(p);
+                if (added > 0 && failed.length === 0) {
+                    showToast(`✅ ${added} income ${added === 1 ? 'entry' : 'entries'} saved to Supabase!`, 'success');
+                    clearIncomeRows();
+                } else if (added > 0) {
+                    showToast(`⚠️ Saved ${added} entries, ${failed.length} failed: ${failed[0]}`, 'warning', 7000);
                 } else {
-                    const p = addTransaction(txData).then(createdTx => {
-                        if (createdTx) {
-                            if (mainCategory === 'Fees') feeTxIds.push(createdTx.id);
-                            added++;
-                        }
-                    });
-                    promises.push(p);
+                    showToast(`❌ Income save failed: ${failed[0] || 'Unknown error'}`, 'error', 7000);
                 }
-            });
-
-            function finishSubmit() {
-                clearIncomeRows();
                 renderIncomeList();
                 renderTransactions();
                 refreshDashboard();
                 updatePreviewCounts();
-                // Auto-print fee receipts if any fee transactions were added
-                if (feeTxIds.length > 0) {
-                    setTimeout(() => printFeeReceipts(feeTxIds), 400);
-                }
-            }
-
-            if (promises.length > 0) {
-                Promise.all(promises).then(() => {
-                    showToast('✅ ' + added + ' income entries added!', 'success');
-                    finishSubmit();
-                }).catch(err => {
-                    showToast('Error: ' + err.message, 'error');
-                });
-            } else {
-                if (added > 0) {
-                    showToast('✅ ' + added + ' income entries added!', 'success');
-                    finishSubmit();
-                } else {
-                    if (!document.querySelector('#incomeTableBody tr')) {
-                        showToast('No entries to submit. Add some rows first.', 'error');
-                    } else {
-                        showToast('Please fill in all fields (Reference, Particulars, Amount).', 'error');
-                    }
+            } finally {
+                isSubmittingIncomeBulk = false;
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = origHtml;
                 }
             }
         }
@@ -2731,7 +2908,7 @@
                 if (t.tags && t.tags.length > 0) {
                     tagsHtml = t.tags.map(tag => `<span style="background: #f1f3f4; color: #5e6f8a; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">#${escapeHtml(tag)}</span>`).join('');
                 }
-                let studentHtml = t.student ? `<span style="background: #e8f0fe; color: #1a73e8; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">👤 ${escapeHtml(t.student.name)}</span>` : '';
+                let studentHtml = t.student ? `<span onclick="if(window.showFeeLedger) showFeeLedger('${escapeHtml(t.student.admissionNumber)}')" title="Open Student Fee Ledger" style="background: #e8f0fe; color: #1a73e8; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 10px; margin-left: 4px; cursor: pointer;">🎓 ${escapeHtml(t.student.name)} (${escapeHtml(t.student.admissionNumber)})</span>` : '';
 
                 return `
                 <div class="tx-item">
@@ -2755,9 +2932,155 @@
         }
 
         // ════════════════════════════════════════════════════════════════
-        //  EXPENSE BULK
+        //  EXPENSE BULK (Supports General & Faculty-Indexed Expenses)
         // ════════════════════════════════════════════════════════════════
         let expenseRowCount = 0;
+
+        window._activeExpenseEntryMode = 'general';
+        window.switchExpenseEntryMode = async function(mode) {
+            const target = mode === 'faculty' ? 'faculty' : 'general';
+            window._activeExpenseEntryMode = target;
+            const btnGen = document.getElementById('expModeBtnGeneral');
+            const btnFac = document.getElementById('expModeBtnFaculty');
+            if (btnGen) btnGen.classList.toggle('active', target === 'general');
+            if (btnFac) btnFac.classList.toggle('active', target === 'faculty');
+
+            if (target === 'faculty' && getAvailableFacultyList().length === 0 && window.DataService && typeof window.DataService.getFaculty === 'function') {
+                try {
+                    const list = await window.DataService.getFaculty();
+                    if (Array.isArray(list)) window.currentFacultyList = list;
+                } catch (e) {}
+            }
+
+            const rows = Array.from(document.querySelectorAll('#expenseTableBody tr'));
+            if (target === 'faculty') {
+                const blankOrFac = rows.find(r => {
+                    const part = (r.querySelector('.exp-particulars')?.value || '').trim();
+                    const amt = parseFloat(r.querySelector('.exp-amount')?.value || '0');
+                    const main = r.querySelector('.exp-main-category')?.value || '';
+                    return main === 'Faculty Expenses' || (!part && !amt);
+                });
+                if (blankOrFac) {
+                    const mainSel = blankOrFac.querySelector('.exp-main-category');
+                    if (mainSel && mainSel.value !== 'Faculty Expenses') {
+                        mainSel.value = 'Faculty Expenses';
+                        mainSel.dispatchEvent(new Event('change'));
+                    }
+                    blankOrFac.querySelector('.exp-faculty-search')?.focus();
+                } else {
+                    addExpenseRow({ mainCategory: 'Faculty Expenses' });
+                }
+            } else {
+                rows.forEach(r => {
+                    const part = (r.querySelector('.exp-particulars')?.value || '').trim();
+                    const amt = parseFloat(r.querySelector('.exp-amount')?.value || '0');
+                    const mainSel = r.querySelector('.exp-main-category');
+                    if (mainSel && mainSel.value === 'Faculty Expenses' && !part && !amt && !r.dataset.facultyId) {
+                        mainSel.value = '';
+                        mainSel.dispatchEvent(new Event('change'));
+                    }
+                });
+            }
+        };
+
+        function getAvailableFacultyList() {
+            if (Array.isArray(window.currentFacultyList) && window.currentFacultyList.length > 0) {
+                return window.currentFacultyList;
+            }
+            try {
+                const raw = localStorage.getItem('school_accountant_faculty');
+                const parsed = raw ? JSON.parse(raw) : [];
+                if (parsed.length > 0) return parsed;
+            } catch (e) {}
+            return [];
+        }
+
+        function updateExpenseRowFacultyVisibility(row) {
+            if (!row) return;
+            const mainSel = row.querySelector('.exp-main-category');
+            const subSel = row.querySelector('.exp-sub-category');
+            const facWrap = row.querySelector('.exp-faculty-wrap');
+            const salMonthWrap = row.querySelector('.exp-salary-month-wrap');
+            const isFacultyExp = mainSel && mainSel.value === 'Faculty Expenses';
+
+            if (facWrap) {
+                facWrap.style.display = isFacultyExp ? 'block' : 'none';
+            }
+            if (!isFacultyExp) {
+                delete row.dataset.facultyId;
+                delete row.dataset.facultyEmpId;
+                delete row.dataset.facultyName;
+                const facInput = row.querySelector('.exp-faculty-search');
+                const facInfo = row.querySelector('.exp-faculty-selected');
+                if (facInput) facInput.value = '';
+                if (facInfo) facInfo.innerHTML = '';
+            }
+            if (salMonthWrap && subSel) {
+                const subLow = (subSel.value || '').toLowerCase();
+                salMonthWrap.style.display = (isFacultyExp && (subLow === 'salary' || subLow === 'advance salary')) ? 'block' : 'none';
+            }
+        }
+
+        window.filterExpenseRowFaculty = function(inputEl) {
+            const row = inputEl.closest('tr');
+            const listEl = row ? row.querySelector('.exp-faculty-dropdown') : null;
+            if (!listEl) return;
+
+            const q = (inputEl.value || '').trim().toLowerCase();
+            const facultyList = getAvailableFacultyList();
+            const matches = facultyList.filter(f => {
+                if (!q) return true;
+                return (f.employee_id && f.employee_id.toLowerCase().includes(q)) ||
+                       (f.name && f.name.toLowerCase().includes(q)) ||
+                       (f.faculty_name && f.faculty_name.toLowerCase().includes(q)) ||
+                       (f.department && f.department.toLowerCase().includes(q)) ||
+                       (f.designation && f.designation.toLowerCase().includes(q));
+            }).slice(0, 12);
+
+            if (matches.length === 0) {
+                listEl.innerHTML = '<div style="padding:8px 10px; font-size:12px; color:#64748b;">No matching faculty found</div>';
+                listEl.style.display = 'block';
+                return;
+            }
+
+            listEl.innerHTML = matches.map(f => {
+                const isInactive = (f.status || 'active').toLowerCase() !== 'active';
+                const statusTag = isInactive
+                    ? '<span style="color:#b91c1c; font-size:10px; font-weight:700;">(INACTIVE)</span>'
+                    : '<span style="color:#15803d; font-size:10px; font-weight:700;">Active</span>';
+                return `
+                    <div class="exp-fac-opt" data-fac-id="${escapeHtml(f.id)}"
+                         style="padding:7px 10px; cursor:pointer; border-bottom:1px solid #f1f5f9; font-size:12px; ${isInactive ? 'opacity:0.65; background:#fef2f2;' : ''}">
+                        <div><b>${escapeHtml(f.employee_id)}</b> — ${escapeHtml(f.name || f.faculty_name)} ${statusTag}</div>
+                        <div style="font-size:11px; color:#64748b;">${escapeHtml(f.department || '')} • ${escapeHtml(f.designation || '')}</div>
+                    </div>
+                `;
+            }).join('');
+
+            listEl.querySelectorAll('.exp-fac-opt').forEach(opt => {
+                opt.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    const fac = facultyList.find(f => String(f.id) === String(opt.dataset.facId));
+                    if (!fac) return;
+                    if ((fac.status || 'active').toLowerCase() !== 'active') {
+                        showToast(`⚠️ Faculty ${fac.name} (${fac.employee_id}) is inactive and cannot receive new expense entries.`, 'warning');
+                        return;
+                    }
+                    row.dataset.facultyId = fac.id;
+                    row.dataset.facultyEmpId = fac.employee_id || '';
+                    row.dataset.facultyName = fac.name || fac.faculty_name || '';
+                    row.dataset.facultyDept = fac.department || '';
+                    row.dataset.facultyDesig = fac.designation || '';
+                    inputEl.value = `${fac.employee_id} - ${fac.name || fac.faculty_name}`;
+                    const infoEl = row.querySelector('.exp-faculty-selected');
+                    if (infoEl) {
+                        infoEl.innerHTML = `<span style="display:inline-block; margin-top:3px; padding:2px 7px; border-radius:10px; font-size:10px; font-weight:600; background:#fdf2f8; color:#9d174d; border:1px solid #fbcfe8;">👨‍🏫 ${escapeHtml(fac.employee_id)} • ${escapeHtml(fac.name || fac.faculty_name)} • ${escapeHtml(fac.department || '')} (${escapeHtml(fac.designation || '')}) • 🟢 Active</span>`;
+                    }
+                    listEl.style.display = 'none';
+                });
+            });
+            listEl.style.display = 'block';
+        };
 
         function addExpenseRow(data = {}) {
             const tbody = document.getElementById('expenseTableBody');
@@ -2775,20 +3098,52 @@
                 row.dataset.studentName = data.student.name;
                 row.dataset.studentRoll = data.student.rollNumber || '';
             }
+            if (data.faculty && data.faculty.id) {
+                row.dataset.facultyId = data.faculty.id;
+                row.dataset.facultyEmpId = data.faculty.employee_id || '';
+                row.dataset.facultyName = data.faculty.name || '';
+                row.dataset.facultyDept = data.faculty.department || '';
+                row.dataset.facultyDesig = data.faculty.designation || '';
+            }
 
+            const autoVoucher = data.reference || ('VCH-' + String(Date.now()).slice(-5) + idx);
             row.innerHTML = `
-            <td><input type="text" class="exp-ref" value="${data.reference || ''}" placeholder="Voucher No." /></td>
-            <td>
-                <input type="text" class="exp-particulars" value="${data.particulars || ''}" placeholder="Description" />
-                <div class="row-badges" style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;"></div>
-            </td>
-            <td><input type="number" class="exp-amount" value="${data.amount || ''}" step="0.01" placeholder="0.00" /></td>
-            <td><input type="number" class="exp-cheques" value="${data.chequeCount || 0}" step="1" min="0" placeholder="0" /></td>
+            <td><input type="text" class="exp-ref" value="${escapeHtml(autoVoucher)}" placeholder="Voucher No." style="font-family:monospace;" /></td>
             <td>
                 <select class="exp-main-category" style="margin-bottom:4px;"></select>
                 <select class="exp-sub-category" disabled></select>
+                <div class="exp-salary-month-wrap" style="display:none; margin-top:4px;">
+                    <input type="text" class="exp-salary-month" placeholder="Salary Month (e.g. Nov 2026)" style="font-size:11px; padding:4px 6px;" />
+                </div>
             </td>
-            <td><input type="file" class="exp-file" accept="image/*,application/pdf" multiple /></td>
+            <td>
+                <input type="text" class="exp-particulars" value="${escapeHtml(data.particulars || '')}" placeholder="Purpose / Particulars" />
+                <input type="text" class="exp-remarks" value="${escapeHtml(data.remarks || '')}" placeholder="Remarks (optional)" style="margin-top:4px; font-size:11px;" />
+                <div class="row-badges" style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;"></div>
+            </td>
+            <td>
+                <div class="exp-faculty-wrap" style="display:none; position:relative;">
+                    <input type="text" class="exp-faculty-search" placeholder="Search Emp ID or Name..."
+                        oninput="filterExpenseRowFaculty(this)" onfocus="filterExpenseRowFaculty(this)"
+                        onblur="setTimeout(()=>{ const d=this.parentElement.querySelector('.exp-faculty-dropdown'); if(d) d.style.display='none'; }, 180)"
+                        autocomplete="off" style="font-size:12px;" />
+                    <div class="exp-faculty-dropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #cbd5e1; border-radius:8px; box-shadow:0 8px 20px rgba(0,0,0,0.12); z-index:200; max-height:190px; overflow-y:auto;"></div>
+                    <div class="exp-faculty-selected"></div>
+                </div>
+                <span class="exp-faculty-na text-muted" style="font-size:11px;">General Expense (No faculty required)</span>
+            </td>
+            <td>
+                <select class="exp-mode" style="padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px; margin-bottom:4px; width:100%;">
+                    <option value="cash">💵 Cash</option>
+                    <option value="bank_transfer">🏦 Bank Transfer</option>
+                    <option value="cheque">📜 Cheque</option>
+                    <option value="upi">📱 UPI / Online</option>
+                    <option value="other">🔹 Other</option>
+                </select>
+                <input type="text" class="exp-pay-ref" placeholder="UTR / Chq / UPI Ref" style="font-size:11px;" />
+            </td>
+            <td><input type="number" class="exp-amount" value="${data.amount || ''}" min="0.01" step="0.01" placeholder="0.00" /></td>
+            <td><input type="file" class="exp-file" accept="image/*,application/pdf" multiple style="font-size:11px; max-width:130px;" /></td>
             <td><button class="btn btn-danger btn-xs" onclick="removeExpenseRow(this)">✕</button></td>
           `;
             tbody.appendChild(row);
@@ -2798,6 +3153,18 @@
 
             populateMainCategoryDropdown(mainSel, 'expense', data.mainCategory || '');
             populateSubCategoryDropdown(subSel, data.mainCategory || '', data.subCategory || '');
+            updateExpenseRowFacultyVisibility(row);
+
+            // Toggle N/A label cleanly
+            const syncNa = () => {
+                const isFac = mainSel.value === 'Faculty Expenses';
+                const naEl = row.querySelector('.exp-faculty-na');
+                if (naEl) naEl.style.display = isFac ? 'none' : 'inline';
+                updateExpenseRowFacultyVisibility(row);
+            };
+            mainSel.addEventListener('change', syncNa);
+            subSel.addEventListener('change', () => updateExpenseRowFacultyVisibility(row));
+            syncNa();
             renderRowBadges(row);
         }
 
@@ -2806,104 +3173,249 @@
             row.remove();
         }
 
-        function submitExpenseBulk() {
+        let isSubmittingExpenseBulk = false;
+        async function submitExpenseBulk() {
+            if (isSubmittingExpenseBulk) {
+                showToast('Expense submission already in progress...', 'info');
+                return;
+            }
+            if (!currentUser) {
+                showToast('Your session has expired. Please sign in again.', 'error');
+                return;
+            }
             const date = document.getElementById('expenseDate').value;
             if (!date) { showToast('Please select a date.', 'error'); return; }
 
-            const rows = document.querySelectorAll('#expenseTableBody tr');
-            let added = 0;
-            const promises = [];
+            const rows = Array.from(document.querySelectorAll('#expenseTableBody tr'));
+            if (rows.length === 0) {
+                showToast('No entries to submit. Add some rows first.', 'error');
+                return;
+            }
 
-            rows.forEach(row => {
-                const ref = row.querySelector('.exp-ref').value.trim();
-                const particulars = row.querySelector('.exp-particulars').value.trim();
-                const amount = parseFloat(row.querySelector('.exp-amount').value);
-                const chequeCount = parseInt(row.querySelector('.exp-cheques').value) || 0;
-                const mainCategory = row.querySelector('.exp-main-category').value;
-                const subCategory = row.querySelector('.exp-sub-category').value;
+            // Pre-validate rows before submitting any
+            const preparedRows = [];
+            for (const row of rows) {
+                const ref = (row.querySelector('.exp-ref')?.value || '').trim();
+                const particulars = (row.querySelector('.exp-particulars')?.value || '').trim();
+                const remarks = (row.querySelector('.exp-remarks')?.value || '').trim();
+                const amount = parseFloat(row.querySelector('.exp-amount')?.value);
+                const mainCategory = row.querySelector('.exp-main-category')?.value || '';
+                const subCategory = row.querySelector('.exp-sub-category')?.value || '';
+                const subSelectedOpt = row.querySelector('.exp-sub-category')?.selectedOptions?.[0];
+                const facCategoryId = subSelectedOpt ? (subSelectedOpt.dataset.facCatId || '') : '';
+                const mode = row.querySelector('.exp-mode')?.value || 'cash';
+                const payRef = (row.querySelector('.exp-pay-ref')?.value || '').trim();
+                const salaryMonth = (row.querySelector('.exp-salary-month')?.value || '').trim();
                 const fileInput = row.querySelector('.exp-file');
 
-                const tagsList = row.dataset.tags ? JSON.parse(row.dataset.tags) : [];
-                let studentObj = null;
-                if (row.dataset.studentAdmission) {
-                    studentObj = {
-                        admissionNumber: row.dataset.studentAdmission,
-                        name: row.dataset.studentName,
-                        rollNumber: row.dataset.studentRoll || ''
-                    };
+                // Skip completely blank untouched rows if there are multiple rows
+                if (!particulars && (isNaN(amount) || amount === 0) && (!mainCategory || (mainCategory === 'Faculty Expenses' && !row.dataset.facultyId)) && rows.length > 1) {
+                    continue;
                 }
 
-                if (!ref || !particulars || isNaN(amount) || amount === 0) {
+                if (!ref || !particulars || isNaN(amount) || amount <= 0) {
+                    showToast('Please fill valid Voucher No, Particulars, and positive Amount (> 0) for all active rows.', 'error');
                     return;
                 }
 
-                const filePromises = [];
-                if (fileInput && fileInput.files.length > 0) {
-                    for (let f of fileInput.files) {
-                        filePromises.push(readFileAsBase64(f));
+                if (mainCategory === 'Faculty Expenses') {
+                    if (!subCategory) {
+                        showToast(`Please select a Faculty Expense Subcategory for voucher ${ref}.`, 'error');
+                        return;
+                    }
+                    if (!row.dataset.facultyId) {
+                        showToast(`Please search and select a valid Faculty Member for voucher ${ref}.`, 'error');
+                        return;
+                    }
+                    const dupVoucher = transactions.some(t => !t.isDeleted && t.type === 'expense' && (t.reference || '').toLowerCase() === ref.toLowerCase()) ||
+                        preparedRows.some(pr => pr.ref.toLowerCase() === ref.toLowerCase());
+                    if (dupVoucher) {
+                        showToast(`❌ Duplicate voucher number "${ref}". Each expense voucher must be unique.`, 'error');
+                        return;
                     }
                 }
 
-                const txData = {
-                    type: 'expense',
-                    date: date,
-                    reference: ref,
-                    particulars: particulars,
-                    amount: amount,
-                    head: mainCategory || 'General',
-                    mainCategory: mainCategory || 'General',
-                    subCategory: subCategory || '',
-                    tags: tagsList,
-                    student: studentObj,
-                    bankAmount: amount,
-                    chequeCount: chequeCount,
-                    attachments: []
-                };
-
-                if (filePromises.length > 0) {
-                    const p = Promise.all(filePromises).then(results => {
-                        const attachData = results.map((data, i) => ({
-                            name: fileInput.files[i].name,
-                            type: fileInput.files[i].type,
-                            data: data,
-                            size: fileInput.files[i].size
-                        }));
-                        txData.attachments = attachData;
-                        addTransaction(txData);
-                        added++;
-                    });
-                    promises.push(p);
-                } else {
-                    addTransaction(txData);
-                    added++;
-                }
-            });
-
-            if (promises.length > 0) {
-                Promise.all(promises).then(() => {
-                    showToast('✅ ' + added + ' expense entries added!', 'success');
-                    clearExpenseRows();
-                    renderExpenseList();
-                    renderTransactions();
-                    refreshDashboard();
-                    updatePreviewCounts();
-                }).catch(err => {
-                    showToast('Error: ' + err.message, 'error');
+                preparedRows.push({
+                    row, ref, particulars, remarks, amount, mainCategory, subCategory,
+                    facCategoryId, mode, payRef, salaryMonth, fileInput,
+                    tagsList: row.dataset.tags ? JSON.parse(row.dataset.tags) : [],
+                    facultyId: row.dataset.facultyId || null,
+                    facultyEmpId: row.dataset.facultyEmpId || '',
+                    facultyName: row.dataset.facultyName || '',
+                    facultyDept: row.dataset.facultyDept || '',
+                    facultyDesig: row.dataset.facultyDesig || ''
                 });
-            } else {
-                if (added > 0) {
-                    showToast('✅ ' + added + ' expense entries added!', 'success');
-                    clearExpenseRows();
-                    renderExpenseList();
-                    renderTransactions();
-                    refreshDashboard();
-                    updatePreviewCounts();
-                } else {
-                    if (!document.querySelector('#expenseTableBody tr')) {
-                        showToast('No entries to submit. Add some rows first.', 'error');
-                    } else {
-                        showToast('Please fill in all fields (Voucher, Particulars, Amount).', 'error');
+            }
+
+            if (preparedRows.length === 0) {
+                showToast('Please fill in Voucher No, Particulars, and Amount.', 'error');
+                return;
+            }
+
+            isSubmittingExpenseBulk = true;
+            const submitBtn = document.getElementById('expenseSubmitAllBtn') || document.querySelector('#tab-expense button[onclick="submitExpenseBulk()"]');
+            const origHtml = submitBtn ? submitBtn.innerHTML : '✅ Submit All';
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '⏳ Saving...';
+            }
+
+            let added = 0;
+            const failedErrors = [];
+
+            try {
+                for (const item of preparedRows) {
+                    try {
+                        if (item.mainCategory === 'Faculty Expenses') {
+                            // Atomic RPC path: writes transactions + faculty_expense_payments + revision + audit together
+                            const res = await window.DataService.recordFacultyExpense({
+                                faculty_id: item.facultyId,
+                                faculty_name: item.facultyName,
+                                employee_id: item.facultyEmpId,
+                                department: item.facultyDept,
+                                designation: item.facultyDesig,
+                                expense_category_id: item.facCategoryId || null,
+                                expense_category_name: item.subCategory,
+                                payment_date: date,
+                                voucher_number: item.ref,
+                                amount: item.amount,
+                                payment_mode: item.mode,
+                                reference_number: item.payRef || null,
+                                salary_month: item.salaryMonth || null,
+                                particulars: item.particulars,
+                                remarks: item.remarks || item.particulars
+                            });
+
+                            let attachData = [];
+                            if (item.fileInput && item.fileInput.files.length > 0) {
+                                const results = await Promise.all(Array.from(item.fileInput.files).map(f => readFileAsBase64(f)));
+                                attachData = results.map((data, i) => ({
+                                    name: item.fileInput.files[i].name,
+                                    type: item.fileInput.files[i].type,
+                                    data: data,
+                                    size: item.fileInput.files[i].size
+                                }));
+                            }
+                            const nowIso = new Date().toISOString();
+                            const txId = res.transaction_id || getNextId();
+                            const newTx = {
+                                id: txId,
+                                type: 'expense',
+                                date: date,
+                                reference: item.ref,
+                                particulars: item.particulars,
+                                amount: item.amount,
+                                head: 'Expenses',
+                                mainCategory: 'Faculty Expenses',
+                                subCategory: item.subCategory,
+                                paymentMode: item.mode,
+                                paymentReference: item.payRef || '',
+                                facultyId: item.facultyId,
+                                faculty: {
+                                    id: item.facultyId,
+                                    name: item.facultyName,
+                                    employee_id: item.facultyEmpId,
+                                    department: item.facultyDept,
+                                    designation: item.facultyDesig
+                                },
+                                tags: [...new Set([...item.tagsList, item.mode])],
+                                bankAmount: (item.mode === 'bank_transfer' || item.mode === 'upi' || item.mode === 'cheque') ? item.amount : 0,
+                                chequeCount: item.mode === 'cheque' ? 1 : 0,
+                                attachments: attachData,
+                                isDeleted: false,
+                                createdBy: currentUser.email,
+                                createdAt: nowIso,
+                                updatedBy: currentUser.email,
+                                updatedAt: nowIso
+                            };
+                            if (attachData.length > 0 && !isDemoOfflineMode() && supabaseClient && supaConfig) {
+                                try {
+                                    await uploadTxAttachments(newTx);
+                                    const supaAtts = newTx.attachments.map(a => {
+                                        const c = { ...a }; delete c.data; return c;
+                                    });
+                                    await supabaseClient.from(supaConfig.table).update({ attachments: supaAtts }).eq('id', txId);
+                                } catch (attErr) {
+                                    console.warn('Attachment upload warning on faculty expense:', attErr);
+                                }
+                            }
+                            transactions.push(newTx);
+                            if (txId >= nextId) nextId = txId + 1;
+                            saveData();
+                            if (isDemoOfflineMode()) {
+                                logActivity('Faculty Expense', txId, `Recorded ₹${item.amount.toFixed(2)} (${item.subCategory}) for ${item.facultyName} [${item.facultyEmpId}], Voucher #${item.ref}`);
+                            }
+                            added++;
+                        } else {
+                            // General Expense path
+                            let attachData = [];
+                            if (item.fileInput && item.fileInput.files.length > 0) {
+                                const results = await Promise.all(Array.from(item.fileInput.files).map(f => readFileAsBase64(f)));
+                                attachData = results.map((data, i) => ({
+                                    name: item.fileInput.files[i].name,
+                                    type: item.fileInput.files[i].type,
+                                    data: data,
+                                    size: item.fileInput.files[i].size
+                                }));
+                            }
+
+                            const created = await addTransaction({
+                                type: 'expense',
+                                date: date,
+                                reference: item.ref,
+                                particulars: item.remarks ? `${item.particulars} (${item.remarks})` : item.particulars,
+                                amount: item.amount,
+                                head: item.mainCategory || 'General',
+                                mainCategory: item.mainCategory || 'General',
+                                subCategory: item.subCategory || '',
+                                paymentMode: item.mode,
+                                tags: [...new Set([...item.tagsList, item.mode])],
+                                bankAmount: (item.mode === 'bank_transfer' || item.mode === 'upi' || item.mode === 'cheque') ? item.amount : 0,
+                                chequeCount: item.mode === 'cheque' ? 1 : 0,
+                                attachments: attachData
+                            });
+                            if (!created) {
+                                throw new Error(`Database write failed for voucher ${item.ref}`);
+                            }
+                            added++;
+                        }
+                    } catch (rowErr) {
+                        console.error('Expense row error:', rowErr);
+                        failedErrors.push(`${item.ref}: ${rowErr.message || rowErr}`);
                     }
+                }
+
+                if (added > 0 && failedErrors.length === 0) {
+                    showToast(`✅ ${added} expense ${added === 1 ? 'entry' : 'entries'} saved to Supabase!`, 'success');
+                    clearExpenseRows();
+                } else if (added > 0 && failedErrors.length > 0) {
+                    showToast(`⚠️ Saved ${added} entries, but ${failedErrors.length} failed: ${failedErrors[0]}`, 'warning', 7000);
+                } else {
+                    showToast(`❌ Expense save failed: ${failedErrors[0] || 'Unknown error'}`, 'error', 7000);
+                }
+
+                if (added > 0 && preparedRows.some(r => r.mainCategory === 'Faculty Expenses') && !isDemoOfflineMode()) {
+                    await syncAllFromSupabase();
+                }
+
+                renderExpenseList();
+                renderTransactions();
+                refreshDashboard();
+                updatePreviewCounts();
+                if (typeof window.updateDashboardFacultyMetrics === 'function') {
+                    window.updateDashboardFacultyMetrics();
+                }
+                if (document.getElementById('tab-activity')?.classList.contains('active') && typeof renderActivities === 'function') {
+                    renderActivities();
+                }
+                if (document.getElementById('subtab-faculty-reports')?.classList.contains('active') && typeof window.renderFacultyReports === 'function') {
+                    window.renderFacultyReports();
+                }
+            } finally {
+                isSubmittingExpenseBulk = false;
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = origHtml;
                 }
             }
         }
@@ -2911,7 +3423,7 @@
         function clearExpenseRows() {
             document.getElementById('expenseTableBody').innerHTML = '';
             expenseRowCount = 0;
-            addExpenseRow();
+            addExpenseRow(window._activeExpenseEntryMode === 'faculty' ? { mainCategory: 'Faculty Expenses' } : {});
         }
 
         // ─── Render Expense List ───
@@ -2931,7 +3443,7 @@
                 if (t.tags && t.tags.length > 0) {
                     tagsHtml = t.tags.map(tag => `<span style="background: #f1f3f4; color: #5e6f8a; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">#${escapeHtml(tag)}</span>`).join('');
                 }
-                let studentHtml = t.student ? `<span style="background: #e8f0fe; color: #1a73e8; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px;">👤 ${escapeHtml(t.student.name)}</span>` : '';
+                let studentHtml = t.student ? `<span onclick="if(window.showFeeLedger) showFeeLedger('${escapeHtml(t.student.admissionNumber)}')" title="Open Student Fee Ledger" style="background: #e8f0fe; color: #1a73e8; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 10px; margin-left: 4px; cursor: pointer;">🎓 ${escapeHtml(t.student.name)} (${escapeHtml(t.student.admissionNumber)})</span>` : '';
                 let facultyHtml = '';
                 if (t.faculty) {
                     const fName = t.faculty.name || 'Faculty';
@@ -2975,12 +3487,15 @@
             const mainCategory = document.getElementById('txFilterMainCategory').value;
             const subCategory = document.getElementById('txFilterSubCategory').value;
             const search = document.getElementById('txFilterSearch').value;
+            const studentQuery = document.getElementById('txFilterStudent') ? document.getElementById('txFilterStudent').value : '';
+            const facultyQuery = document.getElementById('txFilterFaculty') ? document.getElementById('txFilterFaculty').value : '';
             const sortBy = document.getElementById('txSortBy').value;
             const sortOrder = document.getElementById('txSortOrder').value;
             const showDeleted = document.getElementById('txFilterShowDeleted').checked;
 
             const filtered = getTransactions({
                 type, dateFrom, dateTo, search,
+                studentQuery, facultyQuery,
                 amountFrom: amountMin, amountTo: amountMax,
                 mainCategory, subCategory, sortBy, sortOrder, showDeleted
             });
@@ -3005,12 +3520,13 @@
                     `).join('');
                 }
 
-                // Construct student HTML
+                // Construct student HTML (clickable -> opens student fee ledger)
                 let studentHtml = '';
                 if (t.student) {
+                    const admEsc = escapeHtml(t.student.admissionNumber || '');
                     studentHtml = `
-                        <span style="background: #e8f0fe; color: #1a73e8; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px;">
-                            👤 ${escapeHtml(t.student.name)} (${escapeHtml(t.student.admissionNumber)})
+                        <span class="tx-student-badge" onclick="if(window.showFeeLedger) showFeeLedger('${admEsc}')" title="Click to open Student Fee Ledger" style="background: #e8f0fe; color: #1a73e8; border: 1px solid #bfdbfe; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;">
+                            🎓 ${escapeHtml(t.student.name)} (${admEsc})
                         </span>
                     `;
                 }
@@ -3082,16 +3598,35 @@
         }
 
         window.restoreTransaction = function (id) {
+            if (!currentUser) { showToast('Session expired. Please sign in again.', 'error'); return; }
             const tx = transactions.find(t => t.id === id);
             if (!tx) return;
             const oldTx = JSON.parse(JSON.stringify(tx));
 
             tx.isDeleted = false;
             delete tx.deletedBy;
-            tx.updatedBy = currentUser ? currentUser.email : 'System';
+            tx.updatedBy = currentUser.email;
             tx.updatedAt = new Date().toISOString();
 
             saveData();
+            if (tx.type === 'income' && tx.mainCategory === 'Fees' && tx.student && tx.student.admissionNumber) {
+                if (!feePayments.some(fp => fp.transaction_id === tx.id)) {
+                    feePayments.push({
+                        transaction_id: tx.id,
+                        student_id: tx.studentId || tx.student.id || null,
+                        student_admission_number: tx.student.admissionNumber,
+                        academic_year: tx.academicYear || getCurrentAcademicYear(tx.date),
+                        fee_month: tx.feeMonth || extractMonthFromParticulars(tx.particulars) || '',
+                        fee_type: tx.subCategory || '',
+                        amount: tx.amount,
+                        payment_date: tx.date,
+                        payment_mode: tx.paymentMode || 'cash',
+                        receipt_number: tx.reference || '',
+                        status: 'completed'
+                    });
+                    saveData();
+                }
+            }
             const rev = trackRevision('RESTORE', oldTx, tx);
             pushOrQueueMutation('RESTORE', tx, rev);
 
@@ -3102,9 +3637,12 @@
             updatePreviewCounts();
             renderIncomeList();
             renderExpenseList();
+            if (typeof refreshFeesUI === 'function') refreshFeesUI();
+            if (typeof window.updateDashboardFacultyMetrics === 'function') window.updateDashboardFacultyMetrics();
         };
 
         window.permanentlyDeleteTransaction = function (id) {
+            if (!currentUser) { showToast('Session expired. Please sign in again.', 'error'); return; }
             if (!confirm('⚠️ Permanently delete this transaction? This action is irreversible and will delete it from Supabase as well!')) return;
             const idx = transactions.findIndex(t => t.id === id);
             if (idx === -1) return;
@@ -3137,6 +3675,8 @@
             document.getElementById('txFilterMainCategory').value = '';
             populateSubCategoryDropdown(document.getElementById('txFilterSubCategory'), '');
             document.getElementById('txFilterSearch').value = '';
+            if (document.getElementById('txFilterStudent')) document.getElementById('txFilterStudent').value = '';
+            if (document.getElementById('txFilterFaculty')) document.getElementById('txFilterFaculty').value = '';
             document.getElementById('txSortBy').value = 'id';
             document.getElementById('txSortOrder').value = 'desc';
             document.getElementById('txFilterType').value = 'all';
@@ -4064,13 +4604,28 @@
             defOpt.textContent = selectEl.id === 'txFilterMainCategory' ? 'All Categories' : 'Select Category';
             selectEl.appendChild(defOpt);
 
-            const mainCats = categories.filter(c => c.parent_id === null);
+            const seenMain = new Set();
+            const mainCats = categories.filter(c => {
+                if (c.parent_id !== null) return false;
+                const key = (c.name || '').trim().toLowerCase();
+                if (!key || seenMain.has(key)) return false;
+                seenMain.add(key);
+                return true;
+            });
             mainCats.forEach(c => {
                 const opt = document.createElement('option');
                 opt.value = c.name;
                 opt.textContent = c.name;
                 selectEl.appendChild(opt);
             });
+
+            // Always expose 'Faculty Expenses' in expense and filter dropdowns
+            if ((type === 'expense' || type === 'all') && !mainCats.some(c => c.name.toLowerCase() === 'faculty expenses')) {
+                const facOpt = document.createElement('option');
+                facOpt.value = 'Faculty Expenses';
+                facOpt.textContent = 'Faculty Expenses';
+                selectEl.appendChild(facOpt);
+            }
 
             if (defaultValue) {
                 selectEl.value = defaultValue;
@@ -4083,9 +4638,11 @@
                     const subSel = row.querySelector('.inc-sub-category') || row.querySelector('.exp-sub-category') || document.getElementById('editTxSubCategory');
                     populateSubCategoryDropdown(subSel, this.value, '');
 
-                    // Update attachment column visibility for income rows
                     if (this.classList.contains('inc-main-category')) {
                         updateIncomeAttachmentColumnVisibility();
+                    }
+                    if (this.classList.contains('exp-main-category')) {
+                        updateExpenseRowFacultyVisibility(this.closest('tr'));
                     }
                 };
             }
@@ -4094,6 +4651,58 @@
             if (selectEl.classList.contains('inc-main-category')) {
                 updateIncomeAttachmentColumnVisibility();
             }
+        }
+
+        const CANONICAL_FACULTY_SUB_ORDER = [
+            'salary', 'advance salary', 'bonus', 'incentives', 'travel expense',
+            'reimbursements', 'gifts / goodies', 'training / workshop expenses', 'other faculty expenses'
+        ];
+
+        function getFacultyExpenseCategoryList() {
+            let source = null;
+            if (Array.isArray(window.facultyExpenseCategoriesCache) && window.facultyExpenseCategoriesCache.length > 0) {
+                source = window.facultyExpenseCategoriesCache.filter(c => c.is_active !== false);
+            } else {
+                try {
+                    const cached = localStorage.getItem('school_accountant_faculty_categories');
+                    if (cached) {
+                        const parsed = JSON.parse(cached);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                            source = parsed.filter(c => c.is_active !== false);
+                        }
+                    }
+                } catch (e) {}
+            }
+            if (!source || source.length === 0) {
+                source = [
+                    { id: '', name: 'Salary' },
+                    { id: '', name: 'Advance Salary' },
+                    { id: '', name: 'Bonus' },
+                    { id: '', name: 'Incentives' },
+                    { id: '', name: 'Travel Expense' },
+                    { id: '', name: 'Reimbursements' },
+                    { id: '', name: 'Gifts / Goodies' },
+                    { id: '', name: 'Training / Workshop Expenses' },
+                    { id: '', name: 'Other Faculty Expenses' }
+                ];
+            }
+            const byKey = new Map();
+            source.forEach(c => {
+                const cleanName = String(c && c.name || '').trim();
+                if (!cleanName || c.parent_id === null) return;
+                const key = cleanName.toLowerCase();
+                if (!byKey.has(key) || (!byKey.get(key).id && c.id)) {
+                    byKey.set(key, { id: c.id || '', name: cleanName });
+                }
+            });
+            return Array.from(byKey.values()).sort((a, b) => {
+                const ia = CANONICAL_FACULTY_SUB_ORDER.indexOf(a.name.toLowerCase());
+                const ib = CANONICAL_FACULTY_SUB_ORDER.indexOf(b.name.toLowerCase());
+                if (ia !== -1 && ib !== -1) return ia - ib;
+                if (ia !== -1) return -1;
+                if (ib !== -1) return 1;
+                return a.name.localeCompare(b.name);
+            });
         }
 
         function populateSubCategoryDropdown(selectEl, mainCategoryName, defaultValue) {
@@ -4110,13 +4719,42 @@
                 return;
             }
 
+            if (mainCategoryName.toLowerCase() === 'faculty expenses') {
+                const facCats = getFacultyExpenseCategoryList();
+                selectEl.disabled = facCats.length === 0;
+                facCats.forEach(fc => {
+                    const opt = document.createElement('option');
+                    opt.value = fc.name;
+                    opt.textContent = fc.name;
+                    if (fc.id) opt.dataset.facCatId = fc.id;
+                    selectEl.appendChild(opt);
+                });
+                if (defaultValue) selectEl.value = defaultValue;
+
+                if (!window.facultyExpenseCategoriesCache && window.DataService && typeof window.DataService.getFacultyExpenseCategories === 'function') {
+                    window.DataService.getFacultyExpenseCategories({ includeInactive: false }).then(list => {
+                        if (Array.isArray(list) && list.length > 0) {
+                            window.facultyExpenseCategoriesCache = list;
+                        }
+                    }).catch(() => {});
+                }
+                return;
+            }
+
             const parent = categories.find(c => c.name === mainCategoryName && c.parent_id === null);
             if (!parent) {
                 selectEl.disabled = true;
                 return;
             }
 
-            const subs = categories.filter(c => c.parent_id === parent.id);
+            const seenSub = new Set();
+            const subs = categories.filter(c => {
+                if (c.parent_id !== parent.id) return false;
+                const key = (c.name || '').trim().toLowerCase();
+                if (!key || seenSub.has(key)) return false;
+                seenSub.add(key);
+                return true;
+            });
             if (subs.length === 0) {
                 selectEl.disabled = true;
                 return;
@@ -4306,6 +4944,77 @@
             });
         }
 
+        // ─── Settings: Faculty Expense Categories Management ───
+        async function renderSettingsFacultyCategories() {
+            const container = document.getElementById('settingsFacultyCategoriesList');
+            if (!container) return;
+            container.innerHTML = '<div class="text-muted text-sm">Loading faculty categories...</div>';
+            try {
+                let cats = [];
+                if (window.DataService && typeof window.DataService.getFacultyExpenseCategories === 'function') {
+                    cats = await window.DataService.getFacultyExpenseCategories({ includeInactive: true });
+                } else {
+                    cats = getFacultyExpenseCategoryList();
+                }
+                window.facultyExpenseCategoriesCache = cats;
+                if (!cats || cats.length === 0) {
+                    container.innerHTML = '<div class="text-muted text-sm">No faculty expense categories configured.</div>';
+                    return;
+                }
+                container.innerHTML = cats.map(c => {
+                    const active = c.is_active !== false;
+                    return `
+                        <div style="display:flex; justify-content:space-between; align-items:center; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:6px 10px; ${active ? '' : 'opacity:0.65;'}">
+                            <div>
+                                <span style="font-weight:600; color:#0b2a4a;">${escapeHtml(c.name)}</span>
+                                <span style="font-size:10px; margin-left:6px; padding:1px 6px; border-radius:10px; font-weight:700; ${active ? 'background:#dcfce7; color:#15803d;' : 'background:#fee2e2; color:#991b1b;'}">${active ? 'Active' : 'Inactive'}</span>
+                            </div>
+                            <div style="display:flex; gap:4px;">
+                                <button class="btn btn-outline btn-xs" style="font-size:10px; padding:2px 6px;" onclick="editFacultyCategoryPrompt('${escapeHtml(c.id)}', '${escapeHtml(c.name)}', ${active})">✏️ Edit</button>
+                                <button class="btn btn-outline btn-xs" style="font-size:10px; padding:2px 6px; color:${active ? '#b91c1c' : '#15803d'};" onclick="toggleFacultyCategoryActive('${escapeHtml(c.id)}', '${escapeHtml(c.name)}', ${!active})">${active ? 'Disable' : 'Enable'}</button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                container.innerHTML = `<div style="color:#b91c1c; font-size:12px;">Could not load categories: ${escapeHtml(e.message || e)}</div>`;
+            }
+        }
+
+        window.showAddFacultyCategoryPrompt = async function() {
+            const name = prompt('Enter new Faculty Expense Subcategory name:');
+            if (!name || !name.trim()) return;
+            try {
+                await window.DataService.saveFacultyExpenseCategory({ name: name.trim(), is_active: true });
+                showToast(`✅ Added faculty expense category "${name.trim()}".`, 'success');
+                await renderSettingsFacultyCategories();
+            } catch (e) {
+                showToast('Failed to add category: ' + (e.message || e), 'error');
+            }
+        };
+
+        window.editFacultyCategoryPrompt = async function(id, oldName, isActive) {
+            const name = prompt('Rename Faculty Expense Subcategory:', oldName);
+            if (!name || !name.trim() || name.trim() === oldName) return;
+            try {
+                await window.DataService.saveFacultyExpenseCategory({ id, name: name.trim(), is_active: isActive });
+                showToast(`✅ Updated category to "${name.trim()}".`, 'success');
+                await renderSettingsFacultyCategories();
+            } catch (e) {
+                showToast('Failed to update category: ' + (e.message || e), 'error');
+            }
+        };
+
+        window.toggleFacultyCategoryActive = async function(id, name, nextActive) {
+            try {
+                await window.DataService.saveFacultyExpenseCategory({ id, name, is_active: nextActive });
+                showToast(`${nextActive ? '✅ Enabled' : '⏸️ Disabled'} "${name}".`, 'info');
+                await renderSettingsFacultyCategories();
+            } catch (e) {
+                showToast('Failed to update status: ' + (e.message || e), 'error');
+            }
+        };
+
         // ════════════════════════════════════════════════════════════════
         //  ADD STUDENT MODAL LOGIC
         // ════════════════════════════════════════════════════════════════
@@ -4330,6 +5039,8 @@
             const roll = (document.getElementById('newStudentRollNo').value || '').trim();
             const father = (document.getElementById('newStudentFather').value || '').trim();
             const phone = (document.getElementById('newStudentPhone').value || '').trim();
+            const statusEl = document.getElementById('newStudentStatus');
+            const status = statusEl ? statusEl.value : 'active';
 
             if (!adm || !name || !cls || !sec) {
                 showToast('Please fill in Admission Number, Student Name, Class, and Section.', 'error');
@@ -4337,14 +5048,47 @@
             }
 
             const existingIndex = students.findIndex(s => s.admissionNumber.toLowerCase() === adm.toLowerCase());
+            let persistedId = existingIndex >= 0 ? (students[existingIndex].id || null) : null;
+
+            // Push to Supabase FIRST when authenticated & online so DB remains authoritative
+            if (currentUser && currentUser.email !== 'admin@school.local') {
+                if (!supabaseClient || !navigator.onLine) {
+                    showToast('Offline or database disconnected. Cannot persist student to Supabase.', 'error');
+                    return;
+                }
+                const { data: savedRow, error: manualStudErr } = await supabaseClient
+                    .from('students')
+                    .upsert({
+                        admission_number: adm,
+                        name: name,
+                        roll_number: roll,
+                        class: cls,
+                        section: sec,
+                        father_name: father,
+                        phone: phone,
+                        status: status,
+                        updated_at: new Date().toISOString()
+                    }, { onConflict: 'admission_number' })
+                    .select('id, status')
+                    .single();
+                if (manualStudErr) {
+                    const msg = window.DataService?.formatSupabaseError ? window.DataService.formatSupabaseError(manualStudErr) : manualStudErr.message;
+                    showToast('Failed to save student in Supabase: ' + msg, 'error', 6000);
+                    return;
+                }
+                if (savedRow && savedRow.id) persistedId = savedRow.id;
+            }
+
             const newStudent = {
+                id: persistedId,
                 admissionNumber: adm,
                 name: name,
                 rollNumber: roll,
                 class: cls,
                 section: sec,
                 fatherName: father,
-                phone: phone
+                phone: phone,
+                status: status
             };
 
             if (existingIndex >= 0) {
@@ -4356,24 +5100,6 @@
             localStorage.removeItem('school_accountant_students_cleared');
             saveStudents();
             updateStudentCountDisplay();
-
-            // Push to Supabase if connected
-            if (supabaseClient && navigator.onLine) {
-                try {
-                    await supabaseClient.from('students').upsert({
-                        admission_number: adm,
-                        name: name,
-                        roll_number: roll,
-                        class: cls,
-                        section: sec,
-                        father_name: father,
-                        phone: phone,
-                        updated_at: new Date().toISOString()
-                    }, { onConflict: 'admission_number' });
-                } catch (err) {
-                    console.warn('Failed to upsert student to Supabase:', err);
-                }
-            }
 
             showToast(`✅ Student ${name} (${adm}) saved successfully!`, 'success');
             hideAddStudentModal();
@@ -4685,14 +5411,16 @@
             tableBody.innerHTML = pageItems.map(s => `
                 <tr>
                     <td data-label="Admission No"><b>${escapeHtml(s.admissionNumber)}</b></td>
-                    <td data-label="Student Name">${escapeHtml(s.name)}</td>
+                    <td data-label="Student Name">${escapeHtml(s.name)} ${s.status === 'inactive' ? '<span style="font-size:10px; color:#b91c1c; font-weight:700;">(Inactive)</span>' : ''}</td>
                     <td data-label="Roll Number">${escapeHtml(s.rollNumber || '—')}</td>
                     <td data-label="Class">${escapeHtml(s.class || '—')}</td>
                     <td data-label="Section">${escapeHtml(s.section || '—')}</td>
                     <td data-label="Father Name">${escapeHtml(s.fatherName || '—')}</td>
                     <td data-label="Phone Number">${escapeHtml(s.phone || '—')}</td>
-                    <td data-label="Actions">
-                        <button class="btn btn-outline btn-xs btn-view-student-tx" data-admission="${escapeHtml(s.admissionNumber)}" data-name="${escapeHtml(s.name)}">🔍 View Transactions</button>
+                    <td data-label="Actions" style="white-space:nowrap;">
+                        <button class="btn btn-success btn-xs" onclick="hideStudentDirectoryModal(); openCollectFeeModal('${escapeHtml(s.admissionNumber)}')" title="Collect Fee">💳 Fee</button>
+                        <button class="btn btn-primary btn-xs" onclick="hideStudentDirectoryModal(); showFeeLedger('${escapeHtml(s.admissionNumber)}')" title="Open Fee Ledger">📒 Ledger</button>
+                        <button class="btn btn-outline btn-xs btn-view-student-tx" data-admission="${escapeHtml(s.admissionNumber)}" data-name="${escapeHtml(s.name)}">🔍 Tx</button>
                     </td>
                 </tr>
             `).join('');
@@ -5089,10 +5817,16 @@
         function refreshFeesUI() {
             if (typeof renderFeesOverview === 'function') {
                 renderFeesOverview();
+                if (typeof populateFeesStatusFilters === 'function') {
+                    populateFeesStatusFilters();
+                }
+                if (typeof renderFeesStatus === 'function') {
+                    renderFeesStatus();
+                }
                 const activeTabBtn = document.querySelector('#tabNav button.active');
                 if (activeTabBtn && activeTabBtn.dataset.tab === 'fees') {
                     const activeSubBtn = document.querySelector('#feesSubTabNav .sub-tab-btn.active');
-                    if (activeSubBtn) {
+                    if (activeSubBtn && activeSubBtn.dataset.subtab !== 'fees-overview' && activeSubBtn.dataset.subtab !== 'fees-status') {
                         renderFeesSubTab(activeSubBtn.dataset.subtab);
                     }
                 }
@@ -5182,14 +5916,112 @@
             return 'Yearly';
         }
 
-        // Calculation of student structured dues and paid amounts
+        // Quick student search in Fee Management header
+        window.handleFeesQuickStudentSearch = function(query) {
+            const dropdown = document.getElementById('feesQuickStudentResults');
+            if (!dropdown) return;
+            const q = (query || '').trim().toLowerCase();
+            if (!q) {
+                dropdown.style.display = 'none';
+                dropdown.innerHTML = '';
+                return;
+            }
+            const matches = students
+                .filter(s => {
+                    const adm = (s.admissionNumber || '').toLowerCase();
+                    const name = (s.name || '').toLowerCase();
+                    const roll = (s.rollNumber || '').toLowerCase();
+                    const cls = (s.class || '').toLowerCase();
+                    const sec = (s.section || '').toLowerCase();
+                    return adm.includes(q) || name.includes(q) || roll.includes(q) || `${cls}-${sec}`.includes(q) || cls.includes(q);
+                })
+                .sort((a, b) => {
+                    const aExact = (a.admissionNumber || '').toLowerCase() === q ? 0 : ((a.admissionNumber || '').toLowerCase().startsWith(q) ? 1 : 2);
+                    const bExact = (b.admissionNumber || '').toLowerCase() === q ? 0 : ((b.admissionNumber || '').toLowerCase().startsWith(q) ? 1 : 2);
+                    if (aExact !== bExact) return aExact - bExact;
+                    return (a.name || '').localeCompare(b.name || '');
+                })
+                .slice(0, 12);
+
+            if (matches.length === 0) {
+                dropdown.innerHTML = '<div style="padding:12px; text-align:center; color:#64748b; font-size:13px;">No matching student found.</div>';
+                dropdown.style.display = 'block';
+                return;
+            }
+            const ayEl = document.getElementById('feesOverviewAcademicYear') || document.getElementById('feesStatusAcademicYear');
+            const ay = (ayEl && ayEl.value) ? ayEl.value : getCurrentAcademicYear();
+            dropdown.innerHTML = '';
+            matches.forEach(s => {
+                const dues = getStudentFeeDues(s, ay);
+                const bal = dues.reduce((sum, d) => sum + d.due_amount, 0);
+                const item = document.createElement('div');
+                item.style = 'display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid #eef2f8; cursor:pointer; background:#fff;';
+                item.innerHTML = `
+                    <div>
+                        <div style="font-weight:700; color:#0b2a4a; font-size:13px;">
+                            <span style="font-family:monospace; background:#eef2ff; color:#1e40af; padding:2px 6px; border-radius:4px; margin-right:6px;">${escapeHtml(s.admissionNumber)}</span>
+                            ${escapeHtml(s.name)}
+                            ${s.status === 'inactive' ? '<span style="color:#b91c1c; font-size:11px; margin-left:6px;">(Inactive)</span>' : ''}
+                        </div>
+                        <div style="font-size:11px; color:#5e6f8a; margin-top:2px;">
+                            Class ${escapeHtml(s.class || '-')}-${escapeHtml(s.section || '-')} | Roll: ${escapeHtml(s.rollNumber || '—')} | Due (${escapeHtml(ay)}): <b style="color:${bal > 0 ? '#b13e3e' : '#0f7b3a'};">₹${bal.toFixed(2)}</b>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:6px; flex-shrink:0;">
+                        <button type="button" class="btn btn-outline btn-xs btn-qs-ledger">📒 Ledger</button>
+                        <button type="button" class="btn btn-success btn-xs btn-qs-collect">💳 Collect</button>
+                    </div>
+                `;
+                item.querySelector('.btn-qs-ledger').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    dropdown.style.display = 'none';
+                    showFeeLedger(s.admissionNumber, ay);
+                });
+                item.querySelector('.btn-qs-collect').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    dropdown.style.display = 'none';
+                    openCollectFeeModal(s.admissionNumber, ay);
+                });
+                item.addEventListener('click', () => {
+                    dropdown.style.display = 'none';
+                    showFeeLedger(s.admissionNumber, ay);
+                });
+                dropdown.appendChild(item);
+            });
+            dropdown.style.display = 'block';
+        };
+
+        document.addEventListener('click', function(e) {
+            const qsWrap = document.getElementById('feesQuickStudentSearch');
+            const qsDrop = document.getElementById('feesQuickStudentResults');
+            if (qsWrap && qsDrop && !qsWrap.contains(e.target) && !qsDrop.contains(e.target)) {
+                qsDrop.style.display = 'none';
+            }
+            const cfWrap = document.getElementById('collectFeeStudentSearch');
+            const cfDrop = document.getElementById('collectFeeStudentDropdown');
+            if (cfWrap && cfDrop && !cfWrap.contains(e.target) && !cfDrop.contains(e.target)) {
+                cfDrop.style.display = 'none';
+            }
+            const ifWrap = document.getElementById('incFeeStudentSearch');
+            const ifDrop = document.getElementById('incFeeStudentDropdown');
+            if (ifWrap && ifDrop && !ifWrap.contains(e.target) && !ifDrop.contains(e.target)) {
+                ifDrop.style.display = 'none';
+            }
+        });
+
+        // Calculation of student structured dues and paid amounts (UUID-linked with assignment discounts & payments)
         window.getStudentFeeDues = function(student, academicYear) {
             const dues = [];
             if (!student) return dues;
-            
-            const rawAssignments = studentFeeAssignments.filter(a => a.student_id === student.admissionNumber && a.academic_year === academicYear);
-            
-            // Deduplicate assignments by category to prevent duplicate calculations
+            const targetAY = academicYear || getCurrentAcademicYear();
+            const todayIso = new Date().toISOString().slice(0, 10);
+
+            const rawAssignments = studentFeeAssignments.filter(a =>
+                a.academic_year === targetAY &&
+                ((student.id && a.student_uuid && a.student_uuid === student.id) || a.student_id === student.admissionNumber)
+            );
+
+            // Deduplicate assignments by category
             const assignments = [];
             const seenCategories = new Set();
             rawAssignments.forEach(a => {
@@ -5198,86 +6030,190 @@
                     assignments.push(a);
                 }
             });
-            
-            const months = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
-            
+
+            const collectTxsForHead = (assign, feeType) => {
+                const matchedTxIds = new Set();
+                const matchedTxs = [];
+
+                // 1. Direct UUID/assignment/admission match via fee_payments index
+                feePayments.forEach(fp => {
+                    if (fp.academic_year !== targetAY) return;
+                    const studentMatch = (student.id && fp.student_id && fp.student_id === student.id) ||
+                        fp.student_admission_number === student.admissionNumber;
+                    if (!studentMatch) return;
+                    const catMatch = (assign && fp.fee_assignment_id && fp.fee_assignment_id === assign.id) ||
+                        (assign && fp.fee_category_id && fp.fee_category_id === assign.fee_category_id) ||
+                        ((fp.fee_type || '').toLowerCase() === feeType.toLowerCase());
+                    if (!catMatch) return;
+
+                    const linkedTx = transactions.find(t => t.id === fp.transaction_id);
+                    if (linkedTx && linkedTx.isDeleted) return;
+                    if (linkedTx && !matchedTxIds.has(linkedTx.id)) {
+                        matchedTxIds.add(linkedTx.id);
+                        matchedTxs.push({
+                            txId: linkedTx.id,
+                            amount: parseFloat(linkedTx.amount || fp.amount || 0),
+                            feeMonth: fp.fee_month || linkedTx.feeMonth || 'April'
+                        });
+                    } else if (!linkedTx && fp.amount && fp.status !== 'reversed' && fp.status !== 'void') {
+                        const key = fp.transaction_id || fp.id || fp.receipt_number;
+                        if (!matchedTxIds.has(key)) {
+                            matchedTxIds.add(key);
+                            matchedTxs.push({
+                                txId: fp.transaction_id,
+                                amount: parseFloat(fp.amount || 0),
+                                feeMonth: fp.fee_month || 'April'
+                            });
+                        }
+                    }
+                });
+
+                // 2. Active transaction fallback without duplicating already-matched txIds
+                transactions.forEach(t => {
+                    if (t.isDeleted || matchedTxIds.has(t.id)) return;
+                    if (t.type !== 'income' || t.mainCategory !== 'Fees') return;
+                    if (t.academicYear !== targetAY) return;
+                    if (!t.subCategory || t.subCategory.toLowerCase() !== feeType.toLowerCase()) return;
+                    const sMatch = (student.id && t.studentId && t.studentId === student.id) ||
+                        (t.student && t.student.admissionNumber === student.admissionNumber);
+                    if (!sMatch) return;
+                    matchedTxIds.add(t.id);
+                    matchedTxs.push({
+                        txId: t.id,
+                        amount: parseFloat(t.amount || 0),
+                        feeMonth: t.feeMonth || 'April'
+                    });
+                });
+
+                return matchedTxs;
+            };
+
+            const handledFeeTypes = new Set();
+
             assignments.forEach(assign => {
                 const cat = categories.find(c => c.id === assign.fee_category_id);
                 if (!cat) return;
-                
+
                 const feeType = cat.name;
+                handledFeeTypes.add(feeType.toLowerCase());
                 const freq = getCategoryFrequency(cat);
-                const totalAmount = assign.assigned_amount;
-                
-                const txs = transactions
-                    .filter(t => !t.isDeleted &&
-                                 t.type === 'income' &&
-                                 t.mainCategory === 'Fees' &&
-                                 t.subCategory && t.subCategory.toLowerCase() === feeType.toLowerCase() &&
-                                 t.student && t.student.admissionNumber === student.admissionNumber &&
-                                 t.academicYear === academicYear);
-                
-                const totalPaid = txs.reduce((sum, t) => sum + t.amount, 0);
-                
+                const grossAssigned = Math.max(0, parseFloat(assign.assigned_amount) || 0);
+                const discountAmt = Math.min(grossAssigned, Math.max(0, parseFloat(assign.discount_amount) || 0));
+                const totalAmount = Math.max(0, grossAssigned - discountAmt);
+                const dueDate = assign.due_date || null;
+
+                const headTxs = collectTxsForHead(assign, feeType);
+                const totalPaid = headTxs.reduce((sum, t) => sum + t.amount, 0);
+                const unpaid = Math.max(0, totalAmount - totalPaid);
+                const isOverdue = Boolean(dueDate && unpaid > 0 && dueDate < todayIso);
+
                 if (totalPaid === 0) {
                     dues.push({
+                        assignmentId: assign.id || null,
+                        categoryId: cat.id,
                         fee_type: feeType,
                         frequency: freq,
                         month: 'April',
+                        assigned_amount: grossAssigned,
+                        discount_amount: discountAmt,
                         structured_amount: totalAmount,
                         paid_amount: 0,
-                        due_amount: totalAmount
+                        due_amount: totalAmount,
+                        due_date: dueDate,
+                        is_overdue: isOverdue,
+                        remarks: assign.remarks || ''
                     });
                 } else {
                     const monthPayments = {};
-                    txs.forEach(t => {
+                    headTxs.forEach(t => {
                         const m = t.feeMonth || 'April';
                         monthPayments[m] = (monthPayments[m] || 0) + t.amount;
                     });
-                    
-                    Object.keys(monthPayments).forEach(m => {
+
+                    const monthKeys = Object.keys(monthPayments);
+                    monthKeys.forEach((m, idx) => {
                         dues.push({
+                            assignmentId: assign.id || null,
+                            categoryId: cat.id,
                             fee_type: feeType,
                             frequency: freq,
                             month: m,
+                            assigned_amount: idx === 0 ? grossAssigned : 0,
+                            discount_amount: idx === 0 ? discountAmt : 0,
                             structured_amount: monthPayments[m],
                             paid_amount: monthPayments[m],
-                            due_amount: 0
+                            due_amount: 0,
+                            due_date: dueDate,
+                            is_overdue: false,
+                            remarks: assign.remarks || ''
                         });
                     });
-                    
-                    const unpaid = totalAmount - totalPaid;
-                    if (unpaid > 0) {
+
+                    const rawUnpaid = totalAmount - totalPaid;
+                    if (rawUnpaid > 0) {
                         const AprilDue = dues.find(d => d.fee_type === feeType && d.month === 'April');
                         if (AprilDue) {
-                            AprilDue.structured_amount += unpaid;
-                            AprilDue.due_amount += unpaid;
+                            AprilDue.structured_amount += rawUnpaid;
+                            AprilDue.due_amount += rawUnpaid;
+                            AprilDue.is_overdue = isOverdue;
                         } else {
                             dues.push({
+                                assignmentId: assign.id || null,
+                                categoryId: cat.id,
                                 fee_type: feeType,
                                 frequency: freq,
                                 month: 'April',
-                                structured_amount: unpaid,
+                                assigned_amount: 0,
+                                discount_amount: 0,
+                                structured_amount: rawUnpaid,
                                 paid_amount: 0,
-                                due_amount: unpaid
+                                due_amount: rawUnpaid,
+                                due_date: dueDate,
+                                is_overdue: isOverdue,
+                                remarks: assign.remarks || ''
                             });
                         }
-                    } else if (unpaid < 0) {
-                        const AprilDue = dues.find(d => d.fee_type === feeType && d.month === 'April');
+                    } else if (rawUnpaid < 0) {
+                        const AprilDue = dues.find(d => d.fee_type === feeType && d.month === 'April') || dues.find(d => d.fee_type === feeType);
                         if (AprilDue) {
-                            AprilDue.structured_amount = Math.max(0, AprilDue.structured_amount + unpaid);
-                            AprilDue.due_amount = Math.max(0, AprilDue.due_amount + unpaid);
-                        } else {
-                            const firstDue = dues.find(d => d.fee_type === feeType);
-                            if (firstDue) {
-                                firstDue.structured_amount = Math.max(0, firstDue.structured_amount + unpaid);
-                                firstDue.due_amount = Math.max(0, firstDue.due_amount + unpaid);
-                            }
+                            AprilDue.structured_amount = Math.max(0, AprilDue.structured_amount + rawUnpaid);
+                            AprilDue.due_amount = Math.max(0, AprilDue.due_amount + rawUnpaid);
                         }
                     }
                 }
             });
-            
+
+            // Include ad-hoc Fees payments recorded for fee heads without an explicit assignment row
+            transactions.forEach(t => {
+                if (t.isDeleted || t.type !== 'income' || t.mainCategory !== 'Fees') return;
+                if (t.academicYear !== targetAY || !t.subCategory) return;
+                if (handledFeeTypes.has(t.subCategory.toLowerCase())) return;
+                const sMatch = (student.id && t.studentId && t.studentId === student.id) ||
+                    (t.student && t.student.admissionNumber === student.admissionNumber);
+                if (!sMatch) return;
+                handledFeeTypes.add(t.subCategory.toLowerCase());
+                const extraTxs = collectTxsForHead(null, t.subCategory);
+                const extraPaid = extraTxs.reduce((s, x) => s + x.amount, 0);
+                if (extraPaid > 0) {
+                    const cat = categories.find(c => c.name.toLowerCase() === t.subCategory.toLowerCase());
+                    dues.push({
+                        assignmentId: null,
+                        categoryId: cat ? cat.id : null,
+                        fee_type: t.subCategory,
+                        frequency: getCategoryFrequency(cat),
+                        month: t.feeMonth || 'April',
+                        assigned_amount: extraPaid,
+                        discount_amount: 0,
+                        structured_amount: extraPaid,
+                        paid_amount: extraPaid,
+                        due_amount: 0,
+                        due_date: null,
+                        is_overdue: false,
+                        remarks: 'Direct Payment'
+                    });
+                }
+            });
+
             return dues;
         };
 
@@ -5285,42 +6221,48 @@
             populateFeesAcademicYears();
             const year = document.getElementById('feesOverviewAcademicYear').value;
             if (!year) return;
-            
+
             const stats = {
                 totalStudents: students.length,
                 paid: 0,
                 pending: 0,
                 partial: 0,
+                overdue: 0,
+                totalAssignedNet: 0,
+                totalPaidAY: 0,
                 outstanding: 0,
                 todayCollection: 0,
                 monthCollection: 0
             };
-            
+
             const todayStr = new Date().toISOString().split('T')[0];
             const currentMonth = new Date().getMonth();
             const currentYear = new Date().getFullYear();
-            
+
             students.forEach(student => {
                 const dues = getStudentFeeDues(student, year);
                 const totalDue = dues.reduce((sum, d) => sum + d.structured_amount, 0);
                 const totalPaid = dues.reduce((sum, d) => sum + d.paid_amount, 0);
                 const outstanding = dues.reduce((sum, d) => sum + d.due_amount, 0);
-                
+                const hasOverdue = dues.some(d => d.is_overdue);
+
+                stats.totalAssignedNet += totalDue;
+                stats.totalPaidAY += totalPaid;
                 stats.outstanding += outstanding;
-                
+
                 if (totalDue > 0) {
-                    if (outstanding === 0) {
+                    if (outstanding <= 0.01) {
                         stats.paid++;
-                    } else if (totalPaid === 0) {
-                        stats.pending++;
                     } else {
-                        stats.partial++;
+                        if (hasOverdue) stats.overdue++;
+                        if (totalPaid <= 0.01) stats.pending++;
+                        else stats.partial++;
                     }
                 } else {
                     stats.paid++;
                 }
             });
-            
+
             transactions.forEach(t => {
                 if (t.type === 'income' && t.mainCategory === 'Fees' && !t.isDeleted) {
                     const tDate = new Date(t.date);
@@ -5332,7 +6274,9 @@
                     }
                 }
             });
-            
+
+            const collectionPct = stats.totalAssignedNet > 0 ? Math.min(100, (stats.totalPaidAY / stats.totalAssignedNet) * 100) : 100;
+
             const statsGrid = document.getElementById('feesOverviewStats');
             statsGrid.innerHTML = `
                 <div class="stat-card">
@@ -5340,24 +6284,25 @@
                     <div class="value accent">${stats.totalStudents}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="label">Fully Paid</div>
-                    <div class="value positive">${stats.paid}</div>
+                    <div class="label">Fully Paid / Partial / Pending</div>
+                    <div class="value" style="font-size:15px;">
+                        <span style="color:#0f7b3a;">${stats.paid}</span> /
+                        <span style="color:#b45309;">${stats.partial}</span> /
+                        <span style="color:#b13e3e;">${stats.pending}</span>
+                        ${stats.overdue > 0 ? `<div style="font-size:11px; color:#b91c1c;">(${stats.overdue} overdue)</div>` : ''}
+                    </div>
                 </div>
                 <div class="stat-card">
-                    <div class="label">Partially Paid</div>
-                    <div class="value warning">${stats.partial}</div>
+                    <div class="label">Assigned Fees (${escapeHtml(year)})</div>
+                    <div class="value accent">₹${stats.totalAssignedNet.toFixed(2)}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="label">Fully Pending</div>
-                    <div class="value negative">${stats.pending}</div>
+                    <div class="label">Collected (${escapeHtml(year)} • ${collectionPct.toFixed(1)}%)</div>
+                    <div class="value positive">₹${stats.totalPaidAY.toFixed(2)}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="label">Today's Collection</div>
-                    <div class="value positive">₹${stats.todayCollection.toFixed(2)}</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Month's Collection</div>
-                    <div class="value positive">₹${stats.monthCollection.toFixed(2)}</div>
+                    <div class="label">Today / Month Collection</div>
+                    <div class="value positive" style="font-size:15px;">₹${stats.todayCollection.toFixed(0)} / ₹${stats.monthCollection.toFixed(0)}</div>
                 </div>
                 <div class="stat-card" style="border: 2px solid #f8dddd;">
                     <div class="label" style="color:#b13e3e; font-weight:700;">Pending Fees</div>
@@ -5494,49 +6439,67 @@
         };
 
         window.resetFeesStatusFilters = function() {
-            document.getElementById('feesStatusClass').value = '';
+            const searchEl = document.getElementById('feesStatusSearch');
+            if (searchEl) searchEl.value = '';
+            const clsEl = document.getElementById('feesStatusClass');
+            if (clsEl) clsEl.value = '';
             populateFeesStatusSectionFilter();
-            document.getElementById('feesStatusSection').value = '';
-            document.getElementById('feesStatusType').value = '';
-            document.getElementById('feesStatusMonth').value = '';
-            document.getElementById('feesStatusFilter').value = 'all';
+            const secEl = document.getElementById('feesStatusSection');
+            if (secEl) secEl.value = '';
+            const typeEl = document.getElementById('feesStatusType');
+            if (typeEl) typeEl.value = '';
+            const monthEl = document.getElementById('feesStatusMonth');
+            if (monthEl) monthEl.value = '';
+            const balEl = document.getElementById('feesStatusBalanceFilter');
+            if (balEl) balEl.value = 'all';
+            const statusEl = document.getElementById('feesStatusFilter');
+            if (statusEl) statusEl.value = 'all';
             renderFeesStatus();
         };
 
         function renderFeesStatus() {
-            const year = document.getElementById('feesStatusAcademicYear').value;
+            const yearEl = document.getElementById('feesStatusAcademicYear');
+            const year = (yearEl && yearEl.value) ? yearEl.value : getCurrentAcademicYear();
             if (!year) return;
-            
-            const clsFilter = document.getElementById('feesStatusClass').value;
-            const secFilter = document.getElementById('feesStatusSection').value;
-            const typeFilter = document.getElementById('feesStatusType').value;
-            const monthFilter = document.getElementById('feesStatusMonth').value;
-            const statusFilter = document.getElementById('feesStatusFilter').value;
-            
+
+            const searchVal = (document.getElementById('feesStatusSearch')?.value || '').trim().toLowerCase();
+            const clsFilter = document.getElementById('feesStatusClass')?.value || '';
+            const secFilter = document.getElementById('feesStatusSection')?.value || '';
+            const typeFilter = document.getElementById('feesStatusType')?.value || '';
+            const monthFilter = document.getElementById('feesStatusMonth')?.value || '';
+            const balanceFilter = document.getElementById('feesStatusBalanceFilter')?.value || 'all';
+            const statusFilter = document.getElementById('feesStatusFilter')?.value || 'all';
+
             let filteredStudents = students.filter(s => {
                 if (clsFilter && s.class !== clsFilter) return false;
                 if (secFilter && s.section !== secFilter) return false;
+                if (searchVal) {
+                    const hay = `${s.admissionNumber || ''} ${s.name || ''} ${s.rollNumber || ''} ${s.class || ''} ${s.section || ''}`.toLowerCase();
+                    if (!hay.includes(searchVal)) return false;
+                }
                 return true;
             });
-            
+
             const feeTypesCols = typeFilter ? [typeFilter] : getActiveFeeTypes();
             const header = document.getElementById('feesStatusMatrixHeader');
             header.innerHTML = `
                 <tr>
-                    <th style="min-width:180px; text-align:left;">Student Details</th>
-                    ${feeTypesCols.map(t => `<th style="min-width:110px;">${escapeHtml(t)}</th>`).join('')}
-                    <th style="min-width:90px;">Total Due</th>
-                    <th style="min-width:90px;">Paid</th>
-                    <th style="min-width:90px;">Pending Fees</th>
-                    <th style="min-width:90px;">Status</th>
+                    <th style="min-width:110px; text-align:left;">Admission No</th>
+                    <th style="min-width:170px; text-align:left;">Student Details</th>
+                    ${feeTypesCols.map(t => `<th style="min-width:105px;">${escapeHtml(t)}</th>`).join('')}
+                    <th style="min-width:95px;">Assigned (₹)</th>
+                    <th style="min-width:90px;">Paid (₹)</th>
+                    <th style="min-width:95px;">Balance (₹)</th>
+                    <th style="min-width:105px;">Progress &amp; Status</th>
+                    <th style="min-width:210px;">Actions</th>
                 </tr>
             `;
-            
+
             const tbody = document.getElementById('feesStatusMatrixBody');
             tbody.innerHTML = '';
-            
+
             if (filteredStudents.length === 0) {
-                const totalCols = feeTypesCols.length + 5;
+                const totalCols = feeTypesCols.length + 7;
                 if (students.length === 0) {
                     tbody.innerHTML = `
                         <tr>
@@ -5563,13 +6526,13 @@
                             <td colspan="${totalCols}" style="text-align:center; padding: 40px 16px; color: #64748b;">
                                 <div style="font-size: 32px; margin-bottom: 8px;">🔍</div>
                                 <div style="font-weight: 700; color: #0b2a4a; font-size: 15px;">No students match the selected filters</div>
-                                <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Try clearing your Class, Section, Fee Type, or Status filter options.</div>
+                                <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Try clearing your Admission No, Class, Section, Fee Type, or Status filter options.</div>
                                 <button class="btn btn-outline btn-sm" onclick="resetFeesStatusFilters()" style="margin-top: 14px;">Reset Filters</button>
                             </td>
                         </tr>
                     `;
                 }
-                document.getElementById('feesStatusSummary').innerHTML = `Showing <b>0</b> students of <b>${students.length}</b>. Grand Totals – Structured: <b>₹0.00</b> | Paid: <b>₹0.00</b> | Pending Fees: <strong>₹0.00</strong>`;
+                document.getElementById('feesStatusSummary').innerHTML = `Showing <b>0</b> students of <b>${students.length}</b>. Grand Totals – Assigned: <b>₹0.00</b> | Paid: <b>₹0.00</b> | Pending Fees: <strong>₹0.00</strong>`;
                 return;
             }
 
@@ -5577,81 +6540,125 @@
             let totalStructuredAll = 0;
             let totalPaidAll = 0;
             let totalOutstandingAll = 0;
-            
+
             filteredStudents.forEach(s => {
                 const dues = getStudentFeeDues(s, year);
-                
+
                 let sDues = dues.filter(d => {
                     if (typeFilter && d.fee_type.toLowerCase() !== typeFilter.toLowerCase()) return false;
                     if (monthFilter && d.month !== monthFilter) return false;
                     return true;
                 });
-                
+
                 const sStructured = sDues.reduce((sum, d) => sum + d.structured_amount, 0);
                 const sPaid = sDues.reduce((sum, d) => sum + d.paid_amount, 0);
                 const sOutstanding = sDues.reduce((sum, d) => sum + d.due_amount, 0);
-                
+                const hasOverdue = sDues.some(d => d.is_overdue);
+
                 let sStatus = 'Pending';
                 if (sStructured > 0) {
-                    if (sOutstanding === 0) sStatus = 'Paid';
-                    else if (sPaid > 0) sStatus = 'Partial';
+                    if (sOutstanding <= 0.01) sStatus = 'Paid';
+                    else if (sPaid > 0.01) sStatus = 'Partial';
+                    else if (hasOverdue) sStatus = 'Overdue';
                 } else {
                     sStatus = 'Paid';
                 }
-                
-                if (statusFilter !== 'all' && sStatus !== statusFilter) return;
-                
+
+                if (balanceFilter === 'with-balance' && sOutstanding <= 0.01) return;
+                if (balanceFilter === 'zero-balance' && sOutstanding > 0.01) return;
+                if (statusFilter !== 'all') {
+                    if (statusFilter === 'Overdue') {
+                        if (!hasOverdue || sOutstanding <= 0.01) return;
+                    } else if (sStatus !== statusFilter) {
+                        return;
+                    }
+                }
+
                 matchedCount++;
                 totalStructuredAll += sStructured;
                 totalPaidAll += sPaid;
                 totalOutstandingAll += sOutstanding;
-                
+
+                const pct = sStructured > 0 ? Math.min(100, Math.round((sPaid / sStructured) * 100)) : 100;
+
                 const cellsHtml = feeTypesCols.map(type => {
                     const typeDues = sDues.filter(d => d.fee_type.toLowerCase() === type.toLowerCase());
                     const typeStructured = typeDues.reduce((sum, d) => sum + d.structured_amount, 0);
                     const typePaid = typeDues.reduce((sum, d) => sum + d.paid_amount, 0);
                     const typeOutstanding = typeDues.reduce((sum, d) => sum + d.due_amount, 0);
-                    
+
                     if (typeStructured === 0) {
                         return `<td><span class="text-muted">–</span></td>`;
                     }
-                    
-                    if (typeOutstanding === 0) {
-                        return `<td><span class="badge-status paid">₹${typePaid} Paid</span></td>`;
-                    } else if (typePaid === 0) {
-                        return `<td><span class="badge-status pending">₹${typeOutstanding} Due</span></td>`;
+
+                    if (typeOutstanding <= 0.01) {
+                        return `<td><span class="badge-status paid">₹${typePaid.toFixed(0)} Paid</span></td>`;
+                    } else if (typePaid <= 0.01) {
+                        return `<td><span class="badge-status pending">₹${typeOutstanding.toFixed(0)} Due</span></td>`;
                     } else {
-                        return `<td><span class="badge-status partial">₹${typePaid}/₹${typeStructured}</span></td>`;
+                        return `<td><span class="badge-status partial">₹${typePaid.toFixed(0)}/₹${typeStructured.toFixed(0)}</span></td>`;
                     }
                 }).join('');
-                
+
                 let statusBadgeClass = 'pending';
-                if (sStatus === 'Paid') statusBadgeClass = 'paid';
-                else if (sStatus === 'Partial') statusBadgeClass = 'partial';
-                
+                let statusLabel = sStatus;
+                if (sStatus === 'Paid') {
+                    statusBadgeClass = 'paid';
+                    statusLabel = 'Fully Paid';
+                } else if (sStatus === 'Partial') {
+                    statusBadgeClass = 'partial';
+                    statusLabel = 'Partially Paid';
+                } else if (sStatus === 'Overdue') {
+                    statusBadgeClass = 'pending';
+                    statusLabel = 'Overdue';
+                }
+
+                const latestTx = transactions.find(t =>
+                    !t.isDeleted && t.type === 'income' && t.mainCategory === 'Fees' &&
+                    t.academicYear === year &&
+                    ((s.id && t.studentId === s.id) || (t.student && t.student.admissionNumber === s.admissionNumber))
+                );
+
                 const row = document.createElement('tr');
                 row.innerHTML = `
+                    <td style="text-align:left; font-family:monospace; font-weight:700; color:#0b2a4a;">${escapeHtml(s.admissionNumber)}</td>
                     <td style="text-align:left;">
                         <a href="#" class="student-ledger-link" style="font-weight:700; color:#0b2a4a; text-decoration:none;">${escapeHtml(s.name)}</a>
-                        <div style="font-size:11px; color:#5e6f8a; margin-top:2px;">Adm: ${escapeHtml(s.admissionNumber)} | Cls: ${escapeHtml(s.class)}-${escapeHtml(s.section)}</div>
+                        <div style="font-size:11px; color:#5e6f8a; margin-top:2px;">Class ${escapeHtml(s.class || '-')}-${escapeHtml(s.section || '-')} ${s.rollNumber ? `| Roll: ${escapeHtml(s.rollNumber)}` : ''}</div>
                     </td>
                     ${cellsHtml}
                     <td>₹${sStructured.toFixed(0)}</td>
-                    <td>₹${sPaid.toFixed(0)}</td>
-                    <td style="color:${sOutstanding > 0 ? '#b13e3e' : 'inherit'}; font-weight:${sOutstanding > 0 ? '700' : 'bold'};">₹${sOutstanding.toFixed(0)}</td>
-                    <td><span class="badge-status ${statusBadgeClass}">${escapeHtml(sStatus)}</span></td>
+                    <td style="color:#0f7b3a; font-weight:600;">₹${sPaid.toFixed(0)}</td>
+                    <td style="color:${sOutstanding > 0 ? '#b13e3e' : '#0f7b3a'}; font-weight:700;">₹${sOutstanding.toFixed(0)}</td>
+                    <td>
+                        <div style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                            <span class="badge-status ${statusBadgeClass}">${escapeHtml(statusLabel)}</span>
+                            <div style="width:84px; height:6px; background:#e2e8f0; border-radius:3px; overflow:hidden;" title="${pct}% collected">
+                                <div style="width:${pct}%; height:100%; background:${pct >= 100 ? '#0f7b3a' : (pct > 0 ? '#d97706' : '#dc2626')};"></div>
+                            </div>
+                        </div>
+                    </td>
+                    <td style="white-space:nowrap;">
+                        <button type="button" class="btn btn-primary btn-xs btn-status-ledger" title="View Fee Ledger">📒 Ledger</button>
+                        <button type="button" class="btn btn-success btn-xs btn-status-collect" title="Collect Fee">💳 Collect</button>
+                        <button type="button" class="btn btn-outline btn-xs btn-status-history" title="Payment History">📜</button>
+                        ${latestTx ? `<button type="button" class="btn btn-outline btn-xs btn-status-receipt" title="Print Latest Receipt">🖨️</button>` : ''}
+                    </td>
                 `;
-                const ledgerLink = row.querySelector('.student-ledger-link');
-                if (ledgerLink) {
-                    ledgerLink.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        showFeeLedger(s.admissionNumber);
-                    });
+                row.querySelector('.student-ledger-link')?.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    showFeeLedger(s.admissionNumber, year);
+                });
+                row.querySelector('.btn-status-ledger')?.addEventListener('click', () => showFeeLedger(s.admissionNumber, year));
+                row.querySelector('.btn-status-collect')?.addEventListener('click', () => openCollectFeeModal(s.admissionNumber, year));
+                row.querySelector('.btn-status-history')?.addEventListener('click', () => openStudentPaymentHistory(s.admissionNumber, year));
+                if (latestTx) {
+                    row.querySelector('.btn-status-receipt')?.addEventListener('click', () => printReceiptForTransaction(latestTx.id));
                 }
                 tbody.appendChild(row);
             });
-            
-            document.getElementById('feesStatusSummary').innerHTML = `Showing <b>${matchedCount}</b> students of <b>${filteredStudents.length}</b>. Grand Totals – Structured: <b>₹${totalStructuredAll.toFixed(2)}</b> | Paid: <b>₹${totalPaidAll.toFixed(2)}</b> | Pending Fees: <strong class="negative">₹${totalOutstandingAll.toFixed(2)}</strong>`;
+
+            document.getElementById('feesStatusSummary').innerHTML = `Showing <b>${matchedCount}</b> students of <b>${filteredStudents.length}</b>. Grand Totals – Assigned: <b>₹${totalStructuredAll.toFixed(2)}</b> | Paid: <b>₹${totalPaidAll.toFixed(2)}</b> | Pending Fees: <strong class="negative">₹${totalOutstandingAll.toFixed(2)}</strong>`;
         }
 
         window.renderStudentFeeAssignments = function() {
@@ -5832,65 +6839,89 @@
         window.showEditStudentFees = function(admissionNo, year) {
             const student = students.find(s => s.admissionNumber === admissionNo);
             if (!student) return;
-            
+
             document.getElementById('editStudentFeesAdmissionNo').value = admissionNo;
             document.getElementById('editStudentFeesAcademicYear').value = year;
-            document.getElementById('editStudentFeesTitle').textContent = `Edit Student Fees: ${student.name}`;
-            
+            document.getElementById('editStudentFeesTitle').textContent = `Edit Student Fees: ${student.name} (${student.admissionNumber})`;
+
             const fieldsContainer = document.getElementById('editStudentFeesFields');
             fieldsContainer.innerHTML = '';
-            
+
             const activeFeeTypes = getActiveFeeTypes();
             const sAssignments = studentFeeAssignments.filter(a => a.student_id === admissionNo && a.academic_year === year);
             const parent = getFeesParentCategory();
-            
+
             activeFeeTypes.forEach(type => {
                 const cat = categories.find(c => c.name.toLowerCase() === type.toLowerCase() && c.parent_id === parent.id);
                 if (!cat) return;
-                
+
                 const assign = sAssignments.find(a => a.fee_category_id === cat.id);
                 const amount = assign ? assign.assigned_amount : 0;
+                const discount = assign ? (assign.discount_amount || 0) : 0;
+                const dueDate = assign && assign.due_date ? assign.due_date : '';
                 const remarks = assign ? (assign.remarks || '') : '';
-                
+
                 const field = document.createElement('div');
                 field.className = 'field';
-                field.style = 'display:flex; flex-direction:column; gap:4px; margin-bottom:10px;';
-                
+                field.style = 'display:flex; flex-direction:column; gap:4px; margin-bottom:10px; background:#f8fafc; padding:10px; border-radius:10px; border:1px solid #e2e8f0;';
+
                 const label = document.createElement('label');
-                label.style = 'font-size:11px; font-weight:600; color:#5e6f8a;';
+                label.style = 'font-size:11px; font-weight:700; color:#0b2a4a;';
                 label.textContent = type;
                 field.appendChild(label);
 
                 const inputRow = document.createElement('div');
-                inputRow.style = 'display:flex; gap:10px;';
+                inputRow.style = 'display:grid; grid-template-columns: 1fr 1fr 1fr 1.5fr; gap:8px;';
 
                 const numInput = document.createElement('input');
                 numInput.type = 'number';
                 numInput.className = 'student-fee-input';
                 numInput.dataset.categoryId = String(cat.id);
                 numInput.value = String(amount);
-                numInput.placeholder = 'Amount (₹)';
-                numInput.style = 'flex: 2; padding:10px 14px; border:1px solid #d7dfe9; border-radius:10px; font-size:14px;';
+                numInput.placeholder = 'Assigned (₹)';
+                numInput.title = 'Assigned Amount (₹)';
+                numInput.style = 'padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:13px;';
                 numInput.min = '0';
                 numInput.step = 'any';
                 inputRow.appendChild(numInput);
+
+                const discInput = document.createElement('input');
+                discInput.type = 'number';
+                discInput.className = 'student-fee-discount';
+                discInput.dataset.categoryId = String(cat.id);
+                discInput.value = String(discount);
+                discInput.placeholder = 'Discount (₹)';
+                discInput.title = 'Discount / Concession (₹)';
+                discInput.style = 'padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:13px;';
+                discInput.min = '0';
+                discInput.step = 'any';
+                inputRow.appendChild(discInput);
+
+                const dueInput = document.createElement('input');
+                dueInput.type = 'date';
+                dueInput.className = 'student-fee-duedate';
+                dueInput.dataset.categoryId = String(cat.id);
+                dueInput.value = dueDate;
+                dueInput.title = 'Optional Due Date';
+                dueInput.style = 'padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px;';
+                inputRow.appendChild(dueInput);
 
                 const remInput = document.createElement('input');
                 remInput.type = 'text';
                 remInput.className = 'student-fee-remarks';
                 remInput.dataset.categoryId = String(cat.id);
                 remInput.value = remarks;
-                remInput.placeholder = 'Remarks (e.g. Scholarship)';
-                remInput.style = 'flex: 3; padding:10px 14px; border:1px solid #d7dfe9; border-radius:10px; font-size:14px;';
+                remInput.placeholder = 'Remarks / Concession reason';
+                remInput.style = 'padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:13px;';
                 inputRow.appendChild(remInput);
 
                 field.appendChild(inputRow);
                 fieldsContainer.appendChild(field);
             });
-            
+
             document.getElementById('editStudentFeesModal').style.display = 'flex';
         };
-        
+
         window.hideEditStudentFeesModal = function() {
             document.getElementById('editStudentFeesModal').style.display = 'none';
         };
@@ -5899,42 +6930,63 @@
             const admissionNo = document.getElementById('editStudentFeesAdmissionNo').value;
             const year = document.getElementById('editStudentFeesAcademicYear').value;
             if (!admissionNo || !year) return;
-            
+            const student = students.find(s => s.admissionNumber === admissionNo);
+
             const inputs = document.querySelectorAll('#editStudentFeesFields .student-fee-input');
             const newAssignments = [];
-            
+
             for (let input of inputs) {
                 const categoryId = parseInt(input.dataset.categoryId);
-                const amount = parseFloat(input.value) || 0;
+                const amount = Math.max(0, parseFloat(input.value) || 0);
+                const discInput = document.querySelector(`#editStudentFeesFields .student-fee-discount[data-category-id="${categoryId}"]`);
+                const discountAmt = Math.min(amount, Math.max(0, parseFloat(discInput ? discInput.value : '0') || 0));
+                const dueInput = document.querySelector(`#editStudentFeesFields .student-fee-duedate[data-category-id="${categoryId}"]`);
+                const dueDateVal = dueInput && dueInput.value ? dueInput.value : null;
                 const remarksInput = document.querySelector(`#editStudentFeesFields .student-fee-remarks[data-category-id="${categoryId}"]`);
                 const remarksVal = remarksInput ? remarksInput.value.trim() : '';
-                
+
                 newAssignments.push({
                     student_id: admissionNo,
+                    student_uuid: (student && student.id) ? student.id : null,
                     academic_year: year,
                     fee_category_id: categoryId,
                     assigned_amount: amount,
+                    discount_amount: discountAmt,
+                    due_date: dueDateVal,
                     remarks: remarksVal
                 });
             }
-            
+
+            if (newAssignments.length > 0 && !isDemoOfflineMode()) {
+                if (!navigator.onLine || !supabaseClient) {
+                    showToast("❌ Online Supabase connection required to save fee assignments.", "error");
+                    return;
+                }
+                const { data: savedRows, error } = await supabaseClient
+                    .from('student_fee_assignments')
+                    .upsert(newAssignments, { onConflict: 'student_id,academic_year,fee_category_id' })
+                    .select('*');
+                if (error) {
+                    showToast("❌ Failed to save fee assignments: " + error.message, "error");
+                    return;
+                }
+                if (Array.isArray(savedRows)) {
+                    newAssignments.forEach((na, i) => {
+                        const match = savedRows.find(r => r.fee_category_id === na.fee_category_id);
+                        if (match) {
+                            na.id = match.id;
+                            na.student_uuid = match.student_uuid || na.student_uuid;
+                        }
+                    });
+                }
+            }
+
             studentFeeAssignments = studentFeeAssignments.filter(a => !(a.student_id === admissionNo && a.academic_year === year));
             for (let assign of newAssignments) {
                 studentFeeAssignments.push(assign);
             }
             saveData();
-            
-            if (newAssignments.length > 0) {
-                if (navigator.onLine && supabaseClient) {
-                    try {
-                        await supabaseClient
-                            .from('student_fee_assignments')
-                            .upsert(newAssignments, { onConflict: 'student_id,academic_year,fee_category_id' });
-                    } catch (e) {
-                        console.error("Failed to upsert assignments to Supabase:", e);
-                    }
-                }
-            }
+
             showToast("✅ Student fee assignments updated.", "success");
             hideEditStudentFeesModal();
             renderStudentFeeAssignments();
@@ -6225,6 +7277,8 @@
             saveData();
 
             // Batch upsert students in chunks of 50
+            let studentSyncErrors = 0;
+            let assignmentSyncErrors = 0;
             if (studentsToUpsert.length > 0) {
                 if (navigator.onLine && supabaseClient) {
                     const BATCH_SIZE = 50;
@@ -6241,9 +7295,26 @@
                                 phone: s.phone || '',
                                 updated_at: new Date().toISOString()
                             }));
-                            await supabaseClient.from('students').upsert(cleanChunk, { onConflict: 'admission_number' });
+                            const { data: upsertedStuds, error: studErr } = await supabaseClient
+                                .from('students')
+                                .upsert(cleanChunk, { onConflict: 'admission_number' })
+                                .select('id, admission_number, status');
+                            if (studErr) {
+                                console.error("Failed to batch upsert students during import:", studErr);
+                                studentSyncErrors++;
+                            } else if (Array.isArray(upsertedStuds)) {
+                                upsertedStuds.forEach(rs => {
+                                    const locS = students.find(st => st.admissionNumber === rs.admission_number);
+                                    if (locS) {
+                                        locS.id = rs.id;
+                                        locS.status = rs.status || 'active';
+                                    }
+                                });
+                                saveStudents();
+                            }
                         } catch (e) {
                             console.error("Failed to batch upsert students during import:", e);
+                            studentSyncErrors++;
                         }
                     }
                 }
@@ -6256,11 +7327,26 @@
                     for (let i = 0; i < assignmentsToUpsert.length; i += BATCH_SIZE) {
                         const chunk = assignmentsToUpsert.slice(i, i + BATCH_SIZE);
                         try {
-                            await supabaseClient
+                            const { data: upsertedAssigns, error: assignErr } = await supabaseClient
                                 .from('student_fee_assignments')
-                                .upsert(chunk, { onConflict: 'student_id,academic_year,fee_category_id' });
+                                .upsert(chunk, { onConflict: 'student_id,academic_year,fee_category_id' })
+                                .select('id, student_id, student_uuid, academic_year, fee_category_id');
+                            if (assignErr) {
+                                console.error("Failed to batch upsert assignments during import:", assignErr);
+                                assignmentSyncErrors++;
+                            } else if (Array.isArray(upsertedAssigns)) {
+                                upsertedAssigns.forEach(ra => {
+                                    const locA = studentFeeAssignments.find(a => a.student_id === ra.student_id && a.academic_year === ra.academic_year && a.fee_category_id === ra.fee_category_id);
+                                    if (locA) {
+                                        locA.id = ra.id;
+                                        locA.student_uuid = ra.student_uuid || locA.student_uuid;
+                                    }
+                                });
+                                localStorage.setItem(STUDENT_FEE_ASSIGNMENTS_KEY, JSON.stringify(studentFeeAssignments));
+                            }
                         } catch (e) {
                             console.error("Failed to batch upsert assignments during import:", e);
+                            assignmentSyncErrors++;
                         }
                     }
                 }
@@ -6286,7 +7372,11 @@
                 renderStudentDirectory();
             }
             
-            showToast(`✅ Successfully imported ${studentsImported} students and fee assignments.`, 'success');
+            if (studentSyncErrors > 0 || assignmentSyncErrors > 0) {
+                showToast(`⚠️ Imported ${studentsImported} students locally, but remote Supabase sync failed. Please apply migration 08 to update Supabase permissions.`, 'warning', 7000);
+            } else {
+                showToast(`✅ Successfully imported ${studentsImported} students and fee assignments.`, 'success');
+            }
             hideCsvPreviewModal();
         };
 
@@ -6310,7 +7400,7 @@
 
         window.renderFeesReports = function() {
             populateFeesAcademicYears();
-            
+
             const classSelect = document.getElementById('reportsClass');
             const classes = getClassesList();
             const curClass = classSelect.value;
@@ -6318,159 +7408,345 @@
             if (classes.includes(curClass)) {
                 classSelect.value = curClass;
             }
-            
+
             populateReportsSectionFilter();
-            
+
             const rType = document.getElementById('reportsSelectType').value;
             const year = document.getElementById('reportsAcademicYear').value;
             const cls = document.getElementById('reportsClass').value;
             const sec = document.getElementById('reportsSection').value;
             const catFilter = document.getElementById('reportsCategory') ? document.getElementById('reportsCategory').value : '';
-            
+            const dateFrom = document.getElementById('reportsDateFrom')?.value || '';
+            const dateTo = document.getElementById('reportsDateTo')?.value || '';
+
             const header = document.getElementById('feesReportsHeader');
             const tbody = document.getElementById('feesReportsBody');
+            const bannerEl = document.getElementById('feesReportsStatusBanner');
             header.innerHTML = '';
             tbody.innerHTML = '';
-            
-            if (rType === 'monthly-aggregate' || rType === 'type-aggregate') {
-                document.getElementById('reportsClassField').style.display = 'none';
-                document.getElementById('reportsSectionField').style.display = 'none';
-            } else {
-                document.getElementById('reportsClassField').style.display = 'block';
-                document.getElementById('reportsSectionField').style.display = 'block';
-            }
-            
+
+            const setBanner = (msg, type = 'info') => {
+                if (!bannerEl) return;
+                if (!msg) {
+                    bannerEl.style.display = 'none';
+                    bannerEl.innerHTML = '';
+                    return;
+                }
+                const styles = type === 'error'
+                    ? 'background:#fef2f2; border:1px solid #fecaca; color:#991b1b;'
+                    : 'background:#f0f9ff; border:1px solid #bae6fd; color:#0c4a6e;';
+                bannerEl.style = `${styles} padding:8px 12px; border-radius:8px; font-size:12px; font-weight:600; margin-bottom:12px; display:block;`;
+                bannerEl.textContent = msg;
+            };
+
+            const hideClassFields = (rType === 'monthly-aggregate' || rType === 'type-aggregate' || rType === 'daily-collection');
+            document.getElementById('reportsClassField').style.display = hideClassFields ? 'none' : 'block';
+            document.getElementById('reportsSectionField').style.display = hideClassFields ? 'none' : 'block';
+
+            const getFilteredFeeTransactions = () => {
+                return transactions.filter(t => {
+                    if (t.isDeleted || t.type !== 'income' || t.mainCategory !== 'Fees') return false;
+                    if (year && t.academicYear && t.academicYear !== year) return false;
+                    if (catFilter && (!t.subCategory || t.subCategory.toLowerCase() !== catFilter.toLowerCase())) return false;
+                    if (dateFrom && t.date < dateFrom) return false;
+                    if (dateTo && t.date > dateTo) return false;
+                    if (!hideClassFields && (cls || sec)) {
+                        const s = students.find(st => (t.studentId && st.id === t.studentId) || (t.student && st.admissionNumber === t.student.admissionNumber));
+                        const sCls = s ? s.class : (t.student ? t.student.class : '');
+                        const sSec = s ? s.section : (t.student ? t.student.section : '');
+                        if (cls && sCls !== cls) return false;
+                        if (sec && sSec !== sec) return false;
+                    }
+                    return true;
+                });
+            };
+
             if (rType === 'defaulters') {
-                const structHeaderName = catFilter ? `${catFilter} Fee` : 'Structured Dues';
+                const structHeaderName = catFilter ? `${catFilter} Net` : 'Net Payable';
                 header.innerHTML = `
                     <tr>
                         <th>Admission No</th>
                         <th>Student Name</th>
                         <th>Class &amp; Section</th>
-                        <th>${structHeaderName} (₹)</th>
+                        <th>${escapeHtml(structHeaderName)} (₹)</th>
+                        <th>Discount (₹)</th>
                         <th>Paid (₹)</th>
                         <th>Pending Fees (₹)</th>
+                        <th>Status / Action</th>
                     </tr>
                 `;
-                
+
                 let count = 0;
+                let totalOut = 0;
                 students.forEach(student => {
                     if (cls && student.class !== cls) return;
                     if (sec && student.section !== sec) return;
-                    
+
                     const dues = getStudentFeeDues(student, year);
                     let targetDues = dues;
                     if (catFilter) {
                         targetDues = dues.filter(d => d.fee_type.toLowerCase() === catFilter.toLowerCase());
                     }
                     const totalDue = targetDues.reduce((sum, d) => sum + d.structured_amount, 0);
+                    const totalDisc = targetDues.reduce((sum, d) => sum + (d.discount_amount || 0), 0);
                     const totalPaid = targetDues.reduce((sum, d) => sum + d.paid_amount, 0);
                     const outstanding = targetDues.reduce((sum, d) => sum + d.due_amount, 0);
-                    
-                    if (outstanding > 0) {
+                    const isOverdue = targetDues.some(d => d.is_overdue);
+
+                    if (outstanding > 0.01) {
                         count++;
+                        totalOut += outstanding;
                         const tr = document.createElement('tr');
                         tr.innerHTML = `
                             <td><b>${escapeHtml(student.admissionNumber)}</b></td>
                             <td><a href="#" class="student-ledger-link" style="font-weight:700; color:#0b2a4a; text-decoration:none;">${escapeHtml(student.name)}</a></td>
-                            <td>Class ${escapeHtml(student.class)} - ${escapeHtml(student.section || 'N/A')}</td>
+                            <td>Class ${escapeHtml(student.class || '-')} - ${escapeHtml(student.section || 'N/A')}</td>
                             <td>₹${totalDue.toFixed(2)}</td>
+                            <td>₹${totalDisc.toFixed(2)}</td>
                             <td>₹${totalPaid.toFixed(2)}</td>
                             <td style="color:#b13e3e; font-weight:700;">₹${outstanding.toFixed(2)}</td>
+                            <td>
+                                <span class="badge-status ${isOverdue ? 'pending' : (totalPaid > 0 ? 'partial' : 'pending')}">${isOverdue ? 'Overdue' : (totalPaid > 0 ? 'Partial' : 'Pending')}</span>
+                                <button type="button" class="btn btn-success btn-xs btn-rep-collect" style="margin-left:4px;">Collect</button>
+                            </td>
                         `;
-                        const ledgerLink = tr.querySelector('.student-ledger-link');
-                        if (ledgerLink) {
-                            ledgerLink.addEventListener('click', (e) => {
-                                e.preventDefault();
-                                showFeeLedger(student.admissionNumber);
-                            });
-                        }
+                        tr.querySelector('.student-ledger-link')?.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            showFeeLedger(student.admissionNumber, year);
+                        });
+                        tr.querySelector('.btn-rep-collect')?.addEventListener('click', () => openCollectFeeModal(student.admissionNumber, year));
                         tbody.appendChild(tr);
                     }
                 });
-                
+                setBanner(`Defaulters & Pending Balances: ${count} student(s), Total Outstanding ₹${totalOut.toFixed(2)}`);
                 if (count === 0) {
-                    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted" style="padding:20px;">No defaulters found.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted" style="padding:20px;">No defaulters or pending fee balances found.</td></tr>`;
                 }
-            } else if (rType === 'class-aggregate') {
-                const structHeaderName = catFilter ? `${escapeHtml(catFilter)} Fee` : 'Total Structured';
+            } else if (rType === 'partial-payments') {
                 header.innerHTML = `
                     <tr>
+                        <th>Admission No</th>
+                        <th>Student Name</th>
                         <th>Class &amp; Section</th>
-                        <th>Total Students</th>
+                        <th>Net Payable (₹)</th>
+                        <th>Paid (₹)</th>
+                        <th>Remaining (₹)</th>
+                        <th>Progress</th>
+                        <th>Action</th>
+                    </tr>
+                `;
+                let count = 0;
+                students.forEach(student => {
+                    if (cls && student.class !== cls) return;
+                    if (sec && student.section !== sec) return;
+                    const dues = getStudentFeeDues(student, year).filter(d => !catFilter || d.fee_type.toLowerCase() === catFilter.toLowerCase());
+                    const net = dues.reduce((s, d) => s + d.structured_amount, 0);
+                    const paid = dues.reduce((s, d) => s + d.paid_amount, 0);
+                    const bal = dues.reduce((s, d) => s + d.due_amount, 0);
+                    if (paid > 0.01 && bal > 0.01) {
+                        count++;
+                        const pct = net > 0 ? Math.min(100, Math.round((paid / net) * 100)) : 0;
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td><b>${escapeHtml(student.admissionNumber)}</b></td>
+                            <td><a href="#" class="student-ledger-link" style="font-weight:700; color:#0b2a4a; text-decoration:none;">${escapeHtml(student.name)}</a></td>
+                            <td>Class ${escapeHtml(student.class || '-')}-${escapeHtml(student.section || '-')}</td>
+                            <td>₹${net.toFixed(2)}</td>
+                            <td style="color:#0f7b3a; font-weight:600;">₹${paid.toFixed(2)}</td>
+                            <td style="color:#b13e3e; font-weight:700;">₹${bal.toFixed(2)}</td>
+                            <td><span class="badge-status partial">${pct}% Paid</span></td>
+                            <td><button type="button" class="btn btn-success btn-xs btn-rep-collect">Collect Balance</button></td>
+                        `;
+                        tr.querySelector('.student-ledger-link')?.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            showFeeLedger(student.admissionNumber, year);
+                        });
+                        tr.querySelector('.btn-rep-collect')?.addEventListener('click', () => openCollectFeeModal(student.admissionNumber, year));
+                        tbody.appendChild(tr);
+                    }
+                });
+                setBanner(`Partial Payments Report: ${count} student(s) with partial installments paid.`);
+                if (count === 0) {
+                    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted" style="padding:20px;">No partial fee balances found.</td></tr>`;
+                }
+            } else if (rType === 'student-history') {
+                header.innerHTML = `
+                    <tr>
+                        <th>Date</th>
+                        <th>Receipt No</th>
+                        <th>Admission No</th>
+                        <th>Student Name</th>
+                        <th>Fee Head</th>
+                        <th>Mode &amp; Ref</th>
+                        <th>Amount (₹)</th>
+                        <th>Action</th>
+                    </tr>
+                `;
+                const feeTxs = getFilteredFeeTransactions().sort((a, b) => new Date(b.date) - new Date(a.date));
+                let sum = 0;
+                feeTxs.forEach(t => {
+                    sum += t.amount;
+                    const fp = feePayments.find(p => p.transaction_id === t.id);
+                    const s = students.find(st => (t.studentId && st.id === t.studentId) || (t.student && st.admissionNumber === t.student.admissionNumber));
+                    const adm = s ? s.admissionNumber : (fp ? fp.student_admission_number : (t.student ? t.student.admissionNumber : '—'));
+                    const sName = s ? s.name : (t.student ? t.student.name : t.particulars);
+                    const mode = (fp && fp.payment_mode) || t.paymentMode || 'cash';
+                    const ref = (fp && fp.reference_number) ? ` (${fp.reference_number})` : '';
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${escapeHtml(t.date)}</td>
+                        <td style="font-family:monospace;">${escapeHtml(t.reference || (fp && fp.receipt_number) || 'Receipt')}</td>
+                        <td><b>${escapeHtml(adm)}</b></td>
+                        <td>${escapeHtml(sName)}</td>
+                        <td>${escapeHtml(t.subCategory || 'General')}</td>
+                        <td>${escapeHtml(mode.toUpperCase() + ref)}</td>
+                        <td style="color:#0f7b3a; font-weight:700;">₹${t.amount.toFixed(2)}</td>
+                        <td><button type="button" class="btn btn-outline btn-xs" onclick="printReceiptForTransaction('${escapeHtml(String(t.id))}')">🖨️ Receipt</button></td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+                setBanner(`Student Payment History: ${feeTxs.length} payment(s), Total Collected ₹${sum.toFixed(2)}`);
+                if (feeTxs.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted" style="padding:20px;">No student fee payment records match the selected filters.</td></tr>`;
+                }
+            } else if (rType === 'daily-collection') {
+                header.innerHTML = `
+                    <tr>
+                        <th>Date</th>
+                        <th>Receipt Count</th>
+                        <th>Cash (₹)</th>
+                        <th>Bank / UPI / Cheque (₹)</th>
+                        <th>Total Collected (₹)</th>
+                    </tr>
+                `;
+                const feeTxs = getFilteredFeeTransactions();
+                const byDate = {};
+                feeTxs.forEach(t => {
+                    const d = t.date || 'Unknown';
+                    if (!byDate[d]) byDate[d] = { count: 0, cash: 0, digital: 0, total: 0 };
+                    const fp = feePayments.find(p => p.transaction_id === t.id);
+                    const mode = ((fp && fp.payment_mode) || t.paymentMode || 'cash').toLowerCase();
+                    byDate[d].count++;
+                    byDate[d].total += t.amount;
+                    if (mode === 'cash') byDate[d].cash += t.amount;
+                    else byDate[d].digital += t.amount;
+                });
+                const dates = Object.keys(byDate).sort().reverse();
+                let grandTotal = 0;
+                dates.forEach(d => {
+                    const row = byDate[d];
+                    grandTotal += row.total;
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td><b>${escapeHtml(d)}</b></td>
+                        <td>${row.count}</td>
+                        <td>₹${row.cash.toFixed(2)}</td>
+                        <td>₹${row.digital.toFixed(2)}</td>
+                        <td style="color:#0f7b3a; font-weight:700;">₹${row.total.toFixed(2)}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+                setBanner(`Daily Collection Summary: ${dates.length} day(s), Grand Total ₹${grandTotal.toFixed(2)}`);
+                if (dates.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted" style="padding:20px;">No daily fee collections in the selected range.</td></tr>`;
+                }
+            } else if (rType === 'class-aggregate' || rType === 'section-aggregate') {
+                const groupBySection = rType === 'section-aggregate';
+                const structHeaderName = catFilter ? `${escapeHtml(catFilter)} Net` : 'Net Payable';
+                header.innerHTML = `
+                    <tr>
+                        <th>${groupBySection ? 'Class &amp; Section' : 'Class'}</th>
+                        <th>Students</th>
+                        <th>Assigned Gross (₹)</th>
+                        <th>Discounts (₹)</th>
                         <th>${structHeaderName} (₹)</th>
-                        <th>Collected Amount (₹)</th>
-                        <th>Pending Fees (₹)</th>
+                        <th>Collected (₹)</th>
+                        <th>Pending (₹)</th>
                         <th>Collection %</th>
                     </tr>
                 `;
-                
+
                 const groups = {};
                 students.forEach(student => {
-                    const combo = `${student.class}-${student.section || 'General'}`;
-                    if (!groups[combo]) groups[combo] = [];
-                    groups[combo].push(student);
+                    if (cls && student.class !== cls) return;
+                    if (sec && student.section !== sec) return;
+                    const key = groupBySection
+                        ? `Class ${student.class || '-'}-${student.section || 'General'}`
+                        : `Class ${student.class || '-'}`;
+                    if (!groups[key]) groups[key] = [];
+                    groups[key].push(student);
                 });
-                
-                const combos = Object.keys(groups).sort();
-                let count = 0;
-                
-                combos.forEach(combo => {
-                    const list = groups[combo];
-                    const clsVal = list[0].class;
-                    if (cls && clsVal !== cls) return;
-                    
-                    count++;
-                    let sumDue = 0;
-                    let sumPaid = 0;
-                    let sumOut = 0;
-                    
+
+                const keys = Object.keys(groups).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+                let grandCollected = 0;
+                let grandOut = 0;
+
+                keys.forEach(key => {
+                    const list = groups[key];
+                    let sumGross = 0, sumDisc = 0, sumDue = 0, sumPaid = 0, sumOut = 0;
+
                     list.forEach(student => {
-                        const dues = getStudentFeeDues(student, year);
-                        let targetDues = dues;
+                        let targetDues = getStudentFeeDues(student, year);
                         if (catFilter) {
-                            targetDues = dues.filter(d => d.fee_type.toLowerCase() === catFilter.toLowerCase());
+                            targetDues = targetDues.filter(d => d.fee_type.toLowerCase() === catFilter.toLowerCase());
                         }
+                        sumGross += targetDues.reduce((sum, d) => sum + (d.assigned_amount || d.structured_amount), 0);
+                        sumDisc += targetDues.reduce((sum, d) => sum + (d.discount_amount || 0), 0);
                         sumDue += targetDues.reduce((sum, d) => sum + d.structured_amount, 0);
                         sumPaid += targetDues.reduce((sum, d) => sum + d.paid_amount, 0);
                         sumOut += targetDues.reduce((sum, d) => sum + d.due_amount, 0);
                     });
-                    
+
+                    grandCollected += sumPaid;
+                    grandOut += sumOut;
                     const pct = sumDue > 0 ? (sumPaid / sumDue) * 100 : 100;
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
-                        <td><b>Class ${escapeHtml(combo)}</b></td>
+                        <td><b>${escapeHtml(key)}</b></td>
                         <td>${list.length}</td>
+                        <td>₹${sumGross.toFixed(2)}</td>
+                        <td>₹${sumDisc.toFixed(2)}</td>
                         <td>₹${sumDue.toFixed(2)}</td>
                         <td style="color:#0f7b3a; font-weight:600;">₹${sumPaid.toFixed(2)}</td>
-                        <td style="color:${sumOut > 0 ? '#b13e3e' : 'inherit'};">₹${sumOut.toFixed(2)}</td>
+                        <td style="color:${sumOut > 0 ? '#b13e3e' : '#0f7b3a'};">₹${sumOut.toFixed(2)}</td>
                         <td><b>${pct.toFixed(1)}%</b></td>
                     `;
                     tbody.appendChild(tr);
                 });
-                
-                if (count === 0) {
-                    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted" style="padding:20px;">No class aggregate reports generated.</td></tr>`;
+
+                setBanner(`${groupBySection ? 'Section-wise' : 'Class-wise'} Aggregate: Collected ₹${grandCollected.toFixed(2)} | Pending ₹${grandOut.toFixed(2)}`);
+                if (keys.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted" style="padding:20px;">No class/section aggregate data available.</td></tr>`;
                 }
             } else if (rType === 'type-aggregate') {
                 header.innerHTML = `
                     <tr>
-                        <th>Fee Type (Sub-category)</th>
-                        <th>Collected Amount (₹)</th>
-                        <th>Transaction Count</th>
+                        <th>Fee Head</th>
+                        <th>Net Payable (₹)</th>
+                        <th>Collected (₹)</th>
+                        <th>Pending (₹)</th>
+                        <th>Transactions</th>
                     </tr>
                 `;
-                
+
                 const activeTypes = catFilter ? [catFilter] : getActiveFeeTypes();
-                const typeAmounts = {};
-                const typeCounts = {};
+                const typeAssigned = {}, typeAmounts = {}, typePending = {}, typeCounts = {};
                 activeTypes.forEach(t => {
-                    typeAmounts[t] = 0;
-                    typeCounts[t] = 0;
+                    typeAssigned[t] = 0; typeAmounts[t] = 0; typePending[t] = 0; typeCounts[t] = 0;
                 });
-                
-                transactions.forEach(t => {
-                    if (t.type === 'income' && t.mainCategory === 'Fees' && !t.isDeleted && t.subCategory) {
+
+                students.forEach(s => {
+                    getStudentFeeDues(s, year).forEach(d => {
+                        const matchType = activeTypes.find(at => at.toLowerCase() === d.fee_type.toLowerCase());
+                        if (matchType) {
+                            typeAssigned[matchType] += d.structured_amount;
+                            typePending[matchType] += d.due_amount;
+                        }
+                    });
+                });
+
+                getFilteredFeeTransactions().forEach(t => {
+                    if (t.subCategory) {
                         const matchType = activeTypes.find(at => at.toLowerCase() === t.subCategory.toLowerCase());
                         if (matchType) {
                             typeAmounts[matchType] += t.amount;
@@ -6478,16 +7754,19 @@
                         }
                     }
                 });
-                
+
                 activeTypes.forEach(t => {
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td><b>${escapeHtml(t)}</b></td>
+                        <td>₹${typeAssigned[t].toFixed(2)}</td>
                         <td style="color:#0f7b3a; font-weight:700;">₹${typeAmounts[t].toFixed(2)}</td>
+                        <td style="color:${typePending[t] > 0 ? '#b13e3e' : '#0f7b3a'};">₹${typePending[t].toFixed(2)}</td>
                         <td>${typeCounts[t]} collections</td>
                     `;
                     tbody.appendChild(tr);
                 });
+                setBanner(`Fee-Head Summary for Academic Year ${year}`);
             } else if (rType === 'monthly-aggregate') {
                 header.innerHTML = `
                     <tr>
@@ -6496,7 +7775,7 @@
                         <th>Transaction Count</th>
                     </tr>
                 `;
-                
+
                 const months = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
                 const monthAmounts = {};
                 const monthCounts = {};
@@ -6504,18 +7783,18 @@
                     monthAmounts[m] = 0;
                     monthCounts[m] = 0;
                 });
-                
-                transactions.forEach(t => {
-                    if (t.type === 'income' && t.mainCategory === 'Fees' && !t.isDeleted && t.feeMonth) {
-                        if (catFilter && (!t.subCategory || t.subCategory.toLowerCase() !== catFilter.toLowerCase())) return;
-                        if (monthAmounts[t.feeMonth] !== undefined) {
-                            monthAmounts[t.feeMonth] += t.amount;
-                            monthCounts[t.feeMonth]++;
-                        }
+
+                getFilteredFeeTransactions().forEach(t => {
+                    const mKey = t.feeMonth || 'April';
+                    if (monthAmounts[mKey] !== undefined) {
+                        monthAmounts[mKey] += t.amount;
+                        monthCounts[mKey]++;
                     }
                 });
-                
+
+                let grand = 0;
                 months.forEach(m => {
+                    grand += monthAmounts[m];
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td><b>${escapeHtml(m)}</b></td>
@@ -6524,6 +7803,7 @@
                     `;
                     tbody.appendChild(tr);
                 });
+                setBanner(`Monthly Collection Aggregate (${year}): Total ₹${grand.toFixed(2)}`);
             }
         };
 
@@ -6693,76 +7973,145 @@
             renderFeesTypes();
         };
 
-        window.showFeeLedger = function(admissionNo) {
+        window.showFeeLedger = function(admissionNo, yearOverride) {
             const student = students.find(s => s.admissionNumber === admissionNo);
             if (!student) {
                 showToast("Student not found.", "error");
                 return;
             }
-            
+
+            const aySelect = document.getElementById('ledgerAcademicYearSelect');
+            const years = new Set([getCurrentAcademicYear()]);
+            studentFeeAssignments.forEach(a => years.add(a.academic_year));
+            feePayments.forEach(p => years.add(p.academic_year));
+            const sortedYears = Array.from(years).sort().reverse();
+            const year = yearOverride || (aySelect && aySelect.value && sortedYears.includes(aySelect.value) ? aySelect.value : null) ||
+                document.getElementById('feesStatusAcademicYear')?.value || getCurrentAcademicYear();
+
+            window._activeLedgerAdm = student.admissionNumber;
+            window._activeLedgerYear = year;
+
+            if (aySelect) {
+                aySelect.innerHTML = sortedYears.map(y => `<option value="${y}">${y}</option>`).join('');
+                aySelect.value = year;
+            }
+
             document.getElementById('ledgerStudentName').textContent = student.name;
+            const statusBadge = document.getElementById('ledgerStudentStatusBadge');
+            if (statusBadge) {
+                const isInactive = (student.status || 'active') === 'inactive';
+                statusBadge.className = `badge-status ${isInactive ? 'pending' : 'paid'}`;
+                statusBadge.textContent = isInactive ? 'Inactive' : 'Active';
+            }
             document.getElementById('ledgerAdmissionNo').textContent = student.admissionNumber;
             document.getElementById('ledgerRollNo').textContent = student.rollNumber || 'N/A';
-            document.getElementById('ledgerClassSec').textContent = `${student.class} - ${student.section}`;
+            document.getElementById('ledgerClassSec').textContent = `${student.class || '-'} - ${student.section || '-'}`;
             document.getElementById('ledgerFatherName').textContent = student.fatherName || 'N/A';
             document.getElementById('ledgerPhone').textContent = student.phone || 'N/A';
-            
-            const year = document.getElementById('feesStatusAcademicYear').value || getCurrentAcademicYear();
+            const ayLabel = document.getElementById('ledgerAcademicYearLabel');
+            if (ayLabel) ayLabel.textContent = year;
+
             const dues = getStudentFeeDues(student, year);
+            const totalAssignedGross = dues.reduce((sum, d) => sum + (d.assigned_amount || 0), 0);
+            const totalDiscount = dues.reduce((sum, d) => sum + (d.discount_amount || 0), 0);
+            const totalPaid = dues.reduce((sum, d) => sum + d.paid_amount, 0);
             const totalOutstanding = dues.reduce((sum, d) => sum + d.due_amount, 0);
-            
+
+            if (document.getElementById('ledgerTotalAssigned')) document.getElementById('ledgerTotalAssigned').textContent = `₹${totalAssignedGross.toFixed(2)}`;
+            if (document.getElementById('ledgerTotalDiscount')) document.getElementById('ledgerTotalDiscount').textContent = `₹${totalDiscount.toFixed(2)}`;
+            if (document.getElementById('ledgerTotalPaid')) document.getElementById('ledgerTotalPaid').textContent = `₹${totalPaid.toFixed(2)}`;
             document.getElementById('ledgerOutstandingAmount').textContent = `₹${totalOutstanding.toFixed(2)}`;
-            
+
+            const headBreakdownBody = document.getElementById('ledgerHeadBreakdownBody');
+            if (headBreakdownBody) {
+                headBreakdownBody.innerHTML = '';
+                const headNames = Array.from(new Set(dues.map(d => d.fee_type)));
+                if (headNames.length === 0) {
+                    headBreakdownBody.innerHTML = `<tr><td colspan="9" class="text-center text-muted" style="padding:14px;">No fee heads assigned for ${escapeHtml(year)}.</td></tr>`;
+                } else {
+                    headNames.forEach(type => {
+                        const hDues = dues.filter(d => d.fee_type === type);
+                        const gross = hDues.reduce((s, d) => s + (d.assigned_amount || 0), 0);
+                        const disc = hDues.reduce((s, d) => s + (d.discount_amount || 0), 0);
+                        const net = Math.max(0, gross > 0 ? gross - disc : hDues.reduce((s, d) => s + d.structured_amount, 0));
+                        const paid = hDues.reduce((s, d) => s + d.paid_amount, 0);
+                        const bal = hDues.reduce((s, d) => s + d.due_amount, 0);
+                        const freq = hDues[0] ? hDues[0].frequency : 'Yearly';
+                        const overdue = hDues.some(d => d.is_overdue);
+                        const catId = hDues[0] ? hDues[0].categoryId : null;
+
+                        let stBadge = '<span class="badge-status paid">Paid</span>';
+                        if (bal > 0.01) {
+                            stBadge = overdue
+                                ? '<span class="badge-status pending">Overdue</span>'
+                                : (paid > 0.01 ? '<span class="badge-status partial">Partial</span>' : '<span class="badge-status pending">Pending</span>');
+                        }
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td><b>${escapeHtml(type)}</b></td>
+                            <td>${escapeHtml(freq)}</td>
+                            <td style="text-align:right;">₹${gross.toFixed(2)}</td>
+                            <td style="text-align:right; color:#0284c7;">₹${disc.toFixed(2)}</td>
+                            <td style="text-align:right; font-weight:600;">₹${net.toFixed(2)}</td>
+                            <td style="text-align:right; color:#0f7b3a; font-weight:600;">₹${paid.toFixed(2)}</td>
+                            <td style="text-align:right; color:${bal > 0 ? '#b13e3e' : '#0f7b3a'}; font-weight:700;">₹${bal.toFixed(2)}</td>
+                            <td>${stBadge}</td>
+                            <td>${bal > 0.01 ? `<button type="button" class="btn btn-success btn-xs btn-head-collect">Pay</button>` : '<span class="text-muted">—</span>'}</td>
+                        `;
+                        if (bal > 0.01) {
+                            tr.querySelector('.btn-head-collect')?.addEventListener('click', () => {
+                                openCollectFeeModal(student.admissionNumber, year, catId);
+                            });
+                        }
+                        headBreakdownBody.appendChild(tr);
+                    });
+                }
+            }
+
             const months = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
             const matrixHeader = document.querySelector('#ledgerMatrixTable thead');
             const matrixBody = document.querySelector('#ledgerMatrixTable tbody');
-            
+
             matrixHeader.innerHTML = '';
             const headerTr = document.createElement('tr');
-            
             const typeTh = document.createElement('th');
             typeTh.style.textAlign = 'left';
             typeTh.textContent = 'Fee Type';
             headerTr.appendChild(typeTh);
-            
             months.forEach(m => {
                 const th = document.createElement('th');
-                th.textContent = m.substring(0,3);
+                th.textContent = m.substring(0, 3);
                 headerTr.appendChild(th);
             });
-            
             const totalTh = document.createElement('th');
             totalTh.textContent = 'Pending Fees';
             headerTr.appendChild(totalTh);
-            
             matrixHeader.appendChild(headerTr);
-            
+
             matrixBody.innerHTML = '';
-            
             const feeTypes = Array.from(new Set(dues.map(d => d.fee_type)));
-            
+
             if (feeTypes.length === 0) {
                 const tr = document.createElement('tr');
                 const td = document.createElement('td');
                 td.colSpan = 14;
                 td.className = 'text-center text-muted';
                 td.style.padding = '15px';
-                td.textContent = `No fee structures defined for Class ${student.class}.`;
+                td.textContent = `No fee assignments defined for ${student.name} (${year}).`;
                 tr.appendChild(td);
                 matrixBody.appendChild(tr);
             } else {
                 feeTypes.forEach(type => {
                     const rowDues = dues.filter(d => d.fee_type === type);
                     let rowOutstanding = 0;
-                    
                     const tr = document.createElement('tr');
-                    
+
                     const nameTd = document.createElement('td');
                     nameTd.style.textAlign = 'left';
                     nameTd.style.fontWeight = '600';
                     nameTd.textContent = type;
                     tr.appendChild(nameTd);
-                    
+
                     months.forEach(m => {
                         const td = document.createElement('td');
                         const item = rowDues.find(d => d.month === m);
@@ -6774,11 +8123,11 @@
                         } else {
                             rowOutstanding += item.due_amount;
                             const span = document.createElement('span');
-                            if (item.due_amount === 0) {
+                            if (item.due_amount <= 0.01) {
                                 span.className = 'badge-status paid';
                                 span.title = `Paid ₹${item.paid_amount}`;
                                 span.textContent = 'P';
-                            } else if (item.paid_amount === 0) {
+                            } else if (item.paid_amount <= 0.01) {
                                 span.className = 'badge-status pending';
                                 span.title = `Pending ₹${item.due_amount} due`;
                                 span.textContent = 'D';
@@ -6791,79 +8140,103 @@
                         }
                         tr.appendChild(td);
                     });
-                    
+
                     const outTd = document.createElement('td');
                     outTd.style.fontWeight = '700';
-                    if (rowOutstanding > 0) {
-                        outTd.style.color = '#b13e3e';
-                    }
+                    if (rowOutstanding > 0) outTd.style.color = '#b13e3e';
                     outTd.textContent = `₹${rowOutstanding.toFixed(0)}`;
                     tr.appendChild(outTd);
-                    
                     matrixBody.appendChild(tr);
                 });
             }
-            
+
             const paymentsBody = document.getElementById('ledgerPaymentsTableBody');
             paymentsBody.innerHTML = '';
-            
-            const studPayments = feePayments.filter(fp => fp.student_admission_number === student.admissionNumber && fp.academic_year === year);
-            const ledgerTxs = transactions.filter(t => studPayments.some(sp => sp.transaction_id === t.id) && !t.isDeleted);
-            
+
+            const studPayments = feePayments.filter(fp =>
+                fp.academic_year === year &&
+                ((student.id && fp.student_id === student.id) || fp.student_admission_number === student.admissionNumber)
+            );
+            const ledgerTxs = transactions.filter(t => {
+                if (t.isDeleted) return false;
+                if (studPayments.some(sp => sp.transaction_id === t.id)) return true;
+                return t.type === 'income' && t.mainCategory === 'Fees' && t.academicYear === year &&
+                    ((student.id && t.studentId === student.id) || (t.student && t.student.admissionNumber === student.admissionNumber));
+            });
+
             ledgerTxs.sort((a, b) => new Date(b.date) - new Date(a.date));
-            
+
             if (ledgerTxs.length === 0) {
                 const tr = document.createElement('tr');
                 const td = document.createElement('td');
-                td.colSpan = 6;
+                td.colSpan = 7;
                 td.className = 'text-center text-muted';
                 td.style.padding = '20px';
-                td.textContent = 'No historical payment transactions found.';
+                td.textContent = 'No historical payment transactions found for this academic year.';
                 tr.appendChild(td);
                 paymentsBody.appendChild(tr);
             } else {
                 ledgerTxs.forEach(t => {
+                    const fp = studPayments.find(p => p.transaction_id === t.id);
+                    const modeStr = (fp && fp.payment_mode) ? fp.payment_mode.toUpperCase() : (t.paymentMode || 'CASH').toUpperCase();
+                    const refStr = (fp && fp.reference_number) ? ` • ${fp.reference_number}` : '';
                     const tr = document.createElement('tr');
-                    
+
                     const refTd = document.createElement('td');
-                    refTd.textContent = t.reference || 'Receipt';
+                    refTd.style.fontFamily = 'monospace';
+                    refTd.textContent = (fp && fp.receipt_number) || t.reference || 'Receipt';
                     tr.appendChild(refTd);
-                    
+
                     const dateTd = document.createElement('td');
                     dateTd.textContent = t.date;
                     tr.appendChild(dateTd);
-                    
+
                     const typeTd = document.createElement('td');
-                    const typeSpan = document.createElement('span');
-                    typeSpan.style.fontWeight = '600';
-                    typeSpan.textContent = t.subCategory;
-                    typeTd.appendChild(typeSpan);
+                    typeTd.innerHTML = `<span style="font-weight:600;">${escapeHtml(t.subCategory || (fp && fp.fee_type) || 'Fee')}</span>`;
                     tr.appendChild(typeTd);
-                    
+
+                    const modeTd = document.createElement('td');
+                    modeTd.style.fontSize = '12px';
+                    modeTd.textContent = modeStr + refStr;
+                    tr.appendChild(modeTd);
+
                     const partTd = document.createElement('td');
-                    partTd.textContent = t.particulars;
+                    partTd.textContent = (fp && fp.remarks) || t.particulars || '—';
                     tr.appendChild(partTd);
-                    
+
                     const amtTd = document.createElement('td');
+                    amtTd.style.textAlign = 'right';
                     amtTd.style.fontWeight = '700';
                     amtTd.style.color = '#0f7b3a';
                     amtTd.textContent = `₹${t.amount.toFixed(2)}`;
                     tr.appendChild(amtTd);
-                    
+
                     const actTd = document.createElement('td');
-                    
+                    actTd.style.whiteSpace = 'nowrap';
+
+                    const printBtn = document.createElement('button');
+                    printBtn.className = 'btn btn-outline btn-xs';
+                    printBtn.style.padding = '2px 8px';
+                    printBtn.style.fontSize = '11px';
+                    printBtn.style.color = '#4A1510';
+                    printBtn.style.borderColor = '#4A1510';
+                    printBtn.style.marginRight = '4px';
+                    printBtn.textContent = '🖨️ Print Receipt';
+                    printBtn.onclick = () => printReceiptForTransaction(t.id);
+                    actTd.appendChild(printBtn);
+
                     const editBtn = document.createElement('button');
                     editBtn.className = 'btn btn-outline btn-xs';
                     editBtn.style.padding = '2px 8px';
                     editBtn.style.fontSize = '11px';
                     editBtn.style.marginRight = '4px';
                     editBtn.textContent = 'Edit';
-                    editBtn.onclick = function() {
+                    editBtn.onclick = () => {
                         hideFeeLedger();
                         showEditTxModal(t.id);
                     };
                     actTd.appendChild(editBtn);
-                    
+
                     const delBtn = document.createElement('button');
                     delBtn.className = 'btn btn-outline btn-xs';
                     delBtn.style.padding = '2px 8px';
@@ -6871,40 +8244,783 @@
                     delBtn.style.color = '#b13e3e';
                     delBtn.style.borderColor = '#f8dddd';
                     delBtn.textContent = 'Delete';
-                    delBtn.onclick = function() {
+                    delBtn.onclick = async () => {
                         if (confirm('Delete transaction?')) {
-                            hideFeeLedger();
-                            deleteTransaction(t.id);
+                            await deleteTransaction(t.id);
+                            showFeeLedger(student.admissionNumber, year);
                             renderFeesStatus();
                         }
                     };
                     actTd.appendChild(delBtn);
 
-                    // Add Print Receipt button for fee transactions
-                    const printBtn = document.createElement('button');
-                    printBtn.className = 'btn btn-outline btn-xs';
-                    printBtn.style.padding = '2px 8px';
-                    printBtn.style.fontSize = '11px';
-                    printBtn.style.color = '#4A1510';
-                    printBtn.style.borderColor = '#4A1510';
-                    printBtn.style.marginLeft = '4px';
-                    printBtn.textContent = '🖨️ Print Receipt';
-                    printBtn.onclick = function() {
-                        printReceiptForTransaction(t.id);
-                    };
-                    actTd.appendChild(printBtn);
-                    
                     tr.appendChild(actTd);
-                    
                     paymentsBody.appendChild(tr);
                 });
             }
-            
+
             document.getElementById('feeLedgerModal').style.display = 'flex';
         };
 
         window.hideFeeLedger = function() {
             document.getElementById('feeLedgerModal').style.display = 'none';
+        };
+
+        window.exportStudentLedgerCSV = function() {
+            const adm = window._activeLedgerAdm;
+            const year = window._activeLedgerYear || getCurrentAcademicYear();
+            const student = students.find(s => s.admissionNumber === adm);
+            if (!student) return;
+            const dues = getStudentFeeDues(student, year);
+            const rows = [
+                ['Student Fee Ledger', student.name, student.admissionNumber, `${student.class || ''}-${student.section || ''}`, year],
+                [],
+                ['Fee Head', 'Assigned', 'Discount', 'Net Payable', 'Paid', 'Balance'],
+            ];
+            Array.from(new Set(dues.map(d => d.fee_type))).forEach(type => {
+                const hd = dues.filter(d => d.fee_type === type);
+                const g = hd.reduce((s, d) => s + (d.assigned_amount || 0), 0);
+                const disc = hd.reduce((s, d) => s + (d.discount_amount || 0), 0);
+                const net = Math.max(0, g > 0 ? g - disc : hd.reduce((s, d) => s + d.structured_amount, 0));
+                const paid = hd.reduce((s, d) => s + d.paid_amount, 0);
+                const bal = hd.reduce((s, d) => s + d.due_amount, 0);
+                rows.push([type, g.toFixed(2), disc.toFixed(2), net.toFixed(2), paid.toFixed(2), bal.toFixed(2)]);
+            });
+            rows.push([], ['Receipt No', 'Date', 'Fee Head', 'Mode', 'Amount', 'Particulars']);
+            transactions.filter(t => !t.isDeleted && t.type === 'income' && t.mainCategory === 'Fees' && t.academicYear === year &&
+                ((student.id && t.studentId === student.id) || (t.student && t.student.admissionNumber === student.admissionNumber)))
+                .forEach(t => rows.push([t.reference || '', t.date, t.subCategory || '', t.paymentMode || 'cash', t.amount.toFixed(2), t.particulars || '']));
+            const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+            downloadFile(csv, `student_ledger_${student.admissionNumber}_${year}.csv`, 'text/csv;charset=utf-8;');
+        };
+
+        window.printStudentLedger = function() {
+            const adm = window._activeLedgerAdm;
+            const year = window._activeLedgerYear || getCurrentAcademicYear();
+            const student = students.find(s => s.admissionNumber === adm);
+            if (!student) return;
+            const headTable = document.getElementById('ledgerHeadBreakdownBody')?.closest('table')?.outerHTML || '';
+            const payTable = document.getElementById('ledgerPaymentsTableBody')?.closest('table')?.outerHTML || '';
+            const win = window.open('', '_blank');
+            if (!win) return;
+            win.document.write(`
+                <html><head><title>Fee Ledger - ${escapeHtml(student.admissionNumber)}</title>
+                <style>body{font-family:'Segoe UI',sans-serif;padding:24px;color:#1e293b}table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}th{background:#f1f5f9}</style>
+                </head><body onload="window.print()">
+                <h2>${escapeHtml(getActiveSchoolName())} — Student Fee Ledger (${escapeHtml(year)})</h2>
+                <p><b>Student:</b> ${escapeHtml(student.name)} | <b>Admission No:</b> ${escapeHtml(student.admissionNumber)} | <b>Class:</b> ${escapeHtml(student.class || '-')}-${escapeHtml(student.section || '-')} | <b>Balance:</b> ${escapeHtml(document.getElementById('ledgerOutstandingAmount')?.textContent || '₹0.00')}</p>
+                <h3>Fee-Head Breakdown</h3>${headTable}
+                <h3>Payment History</h3>${payTable}
+                </body></html>
+            `);
+            win.document.close();
+        };
+
+        // ════════════════════════════════════════════════════════════════
+        //  COLLECT FEE MODAL & VALIDATION ENGINE
+        // ════════════════════════════════════════════════════════════════
+
+        let _isCollectingFee = false;
+
+        function generateSuggestedReceiptNo() {
+            const existing = feePayments.map(p => p.receipt_number || '').concat(transactions.map(t => t.reference || ''));
+            let maxSeq = 1000;
+            existing.forEach(r => {
+                const m = String(r).match(/REC-(\d+)/i);
+                if (m) {
+                    const n = parseInt(m[1], 10);
+                    if (!isNaN(n) && n >= maxSeq) maxSeq = n + 1;
+                }
+            });
+            return `REC-${maxSeq}`;
+        }
+
+        window._feeHeadRowsByPrefix = window._feeHeadRowsByPrefix || {};
+
+        function populateFeeFormAcademicYears(prefix, yearOverride) {
+            const aySelect = document.getElementById(`${prefix}AcademicYear`);
+            const years = new Set([getCurrentAcademicYear()]);
+            studentFeeAssignments.forEach(a => years.add(a.academic_year));
+            const sortedYears = Array.from(years).sort().reverse();
+            if (aySelect) {
+                aySelect.innerHTML = sortedYears.map(y => `<option value="${y}">${y}</option>`).join('');
+                aySelect.value = yearOverride || getCurrentAcademicYear();
+            }
+        }
+
+        window.initIncomeStudentFeePanel = function(admissionNo, yearOverride, preselectCatId) {
+            const prefix = 'incFee';
+            populateFeeFormAcademicYears(prefix, yearOverride);
+            const incDateEl = document.getElementById('incomeDate');
+            if (incDateEl && !incDateEl.value) {
+                incDateEl.value = new Date().toISOString().slice(0, 10);
+            }
+            const rEl = document.getElementById(`${prefix}ReceiptNo`);
+            if (rEl) rEl.value = generateSuggestedReceiptNo();
+            const aEl = document.getElementById(`${prefix}Amount`);
+            if (aEl) aEl.value = '';
+            const mEl = document.getElementById(`${prefix}Month`);
+            if (mEl) mEl.value = '';
+            const modeEl = document.getElementById(`${prefix}Mode`);
+            if (modeEl) modeEl.value = 'cash';
+            const refEl = document.getElementById(`${prefix}RefNo`);
+            if (refEl) refEl.value = '';
+            const remEl = document.getElementById(`${prefix}Remarks`);
+            if (remEl) remEl.value = '';
+            const multiEl = document.getElementById(`${prefix}MultiMode`);
+            if (multiEl) multiEl.checked = false;
+            window._collectFeePreselectCatId = preselectCatId || null;
+
+            toggleCollectFeeMultiMode(prefix);
+            toggleCollectFeeRefField(prefix);
+
+            if (admissionNo) {
+                selectCollectFeeStudent(admissionNo, prefix);
+            } else {
+                const sEl = document.getElementById(`${prefix}StudentSearch`);
+                if (sEl) sEl.value = '';
+                const uEl = document.getElementById(`${prefix}StudentUuid`);
+                if (uEl) uEl.value = '';
+                const admEl = document.getElementById(`${prefix}StudentAdm`);
+                if (admEl) admEl.value = '';
+                const bEl = document.getElementById(`${prefix}SelectedStudentBanner`);
+                if (bEl) bEl.style.display = 'none';
+                const bodyEl = document.getElementById(`${prefix}HeadsBody`);
+                if (bodyEl) bodyEl.innerHTML = '<tr><td colspan="7" class="text-center text-muted" style="padding:16px;">Search and select a student above to load assigned fees.</td></tr>';
+                const pEl = document.getElementById(`${prefix}ValidationPreview`);
+                if (pEl) pEl.innerHTML = '';
+            }
+        };
+
+        window.openCollectFeeModal = function(admissionNo, yearOverride, preselectCatId) {
+            const prefix = 'collectFee';
+            populateFeeFormAcademicYears(prefix, yearOverride);
+
+            document.getElementById('collectFeeDate').value = new Date().toISOString().slice(0, 10);
+            document.getElementById('collectFeeReceiptNo').value = generateSuggestedReceiptNo();
+            document.getElementById('collectFeeAmount').value = '';
+            document.getElementById('collectFeeMonth').value = '';
+            document.getElementById('collectFeeMode').value = 'cash';
+            document.getElementById('collectFeeRefNo').value = '';
+            document.getElementById('collectFeeRemarks').value = '';
+            document.getElementById('collectFeeMultiMode').checked = false;
+            window._collectFeePreselectCatId = preselectCatId || null;
+
+            toggleCollectFeeMultiMode(prefix);
+            toggleCollectFeeRefField(prefix);
+
+            if (admissionNo) {
+                selectCollectFeeStudent(admissionNo, prefix);
+            } else {
+                document.getElementById('collectFeeStudentSearch').value = '';
+                document.getElementById('collectFeeStudentUuid').value = '';
+                document.getElementById('collectFeeStudentAdm').value = '';
+                document.getElementById('collectFeeSelectedStudentBanner').style.display = 'none';
+                document.getElementById('collectFeeHeadsBody').innerHTML = '<tr><td colspan="7" class="text-center text-muted" style="padding:16px;">Select a student above to view assigned fee heads.</td></tr>';
+                document.getElementById('collectFeeValidationPreview').innerHTML = '';
+            }
+
+            document.getElementById('collectFeeModal').style.display = 'flex';
+        };
+
+        window.hideCollectFeeModal = function() {
+            document.getElementById('collectFeeModal').style.display = 'none';
+        };
+
+        window.searchCollectFeeStudents = function(query, prefix = 'collectFee') {
+            const dropdown = document.getElementById(`${prefix}StudentDropdown`);
+            if (!dropdown) return;
+            const q = (query || '').trim().toLowerCase();
+            const matches = students
+                .filter(s => {
+                    if (!q) return true;
+                    const hay = `${s.admissionNumber || ''} ${s.name || ''} ${s.rollNumber || ''} ${s.class || ''} ${s.section || ''}`.toLowerCase();
+                    return hay.includes(q);
+                })
+                .sort((a, b) => {
+                    const aExact = (a.admissionNumber || '').toLowerCase() === q ? 0 : 1;
+                    const bExact = (b.admissionNumber || '').toLowerCase() === q ? 0 : 1;
+                    if (aExact !== bExact) return aExact - bExact;
+                    return (a.name || '').localeCompare(b.name || '');
+                })
+                .slice(0, 15);
+
+            if (matches.length === 0) {
+                dropdown.innerHTML = '<div style="padding:10px; text-align:center; color:#64748b; font-size:12px;">No matching student found.</div>';
+                dropdown.style.display = 'block';
+                return;
+            }
+            dropdown.innerHTML = '';
+            matches.forEach(s => {
+                const row = document.createElement('div');
+                row.style = 'padding:8px 12px; border-bottom:1px solid #f1f5f9; cursor:pointer; display:flex; justify-content:space-between; align-items:center; font-size:12px;';
+                row.innerHTML = `
+                    <span><b style="font-family:monospace; color:#1e40af;">${escapeHtml(s.admissionNumber)}</b> — <b>${escapeHtml(s.name)}</b> ${s.status === 'inactive' ? '<span style="color:#b91c1c;">(Inactive)</span>' : ''}</span>
+                    <span style="color:#64748b;">Cls ${escapeHtml(s.class || '-')}-${escapeHtml(s.section || '-')}</span>
+                `;
+                row.addEventListener('click', () => {
+                    dropdown.style.display = 'none';
+                    selectCollectFeeStudent(s.admissionNumber, prefix);
+                });
+                dropdown.appendChild(row);
+            });
+            dropdown.style.display = 'block';
+        };
+
+        window.selectCollectFeeStudent = function(admissionNo, prefix = 'collectFee') {
+            const student = students.find(s => s.admissionNumber === admissionNo);
+            if (!student) return;
+            const searchEl = document.getElementById(`${prefix}StudentSearch`);
+            if (searchEl) searchEl.value = `${student.admissionNumber} — ${student.name}`;
+            const uuidEl = document.getElementById(`${prefix}StudentUuid`);
+            if (uuidEl) uuidEl.value = student.id || '';
+            const admEl = document.getElementById(`${prefix}StudentAdm`);
+            if (admEl) admEl.value = student.admissionNumber;
+
+            const ay = document.getElementById(`${prefix}AcademicYear`)?.value || getCurrentAcademicYear();
+            const banner = document.getElementById(`${prefix}SelectedStudentBanner`);
+            if (banner) {
+                const isInactive = (student.status || 'active') === 'inactive';
+                banner.style.display = 'block';
+                banner.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                        <div>
+                            <div style="font-weight:700; color:#0b2a4a; font-size:14px;">
+                                <span style="font-family:monospace; background:#e0f2fe; color:#0369a1; padding:2px 6px; border-radius:4px; margin-right:6px;">${escapeHtml(student.admissionNumber)}</span>
+                                ${escapeHtml(student.name)}
+                                <span class="badge-status ${isInactive ? 'pending' : 'paid'}" style="margin-left:6px; font-size:10px;">${isInactive ? 'Inactive (Blocked)' : 'Active'}</span>
+                            </div>
+                            <div style="font-size:12px; color:#475569; margin-top:3px;">
+                                Class ${escapeHtml(student.class || '-')}-${escapeHtml(student.section || '-')} | Academic Year: <b>${escapeHtml(ay)}</b> | Roll No: ${escapeHtml(student.rollNumber || 'N/A')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            refreshCollectFeeHeads(prefix);
+        };
+
+        window.refreshCollectFeeHeads = function(prefix = 'collectFee') {
+            const adm = document.getElementById(`${prefix}StudentAdm`)?.value || '';
+            const year = document.getElementById(`${prefix}AcademicYear`)?.value || getCurrentAcademicYear();
+            const tbody = document.getElementById(`${prefix}HeadsBody`);
+            if (!tbody) return;
+            const student = students.find(s => s.admissionNumber === adm);
+            if (!student) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted" style="padding:16px;">Select a student first.</td></tr>';
+                return;
+            }
+
+            const dues = getStudentFeeDues(student, year);
+            const headNames = Array.from(new Set(dues.map(d => d.fee_type)));
+            if (headNames.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted" style="padding:16px;">No fee heads assigned for ${escapeHtml(year)}. Assign fees first in Fee Management → Assignments.</td></tr>`;
+                window._feeHeadRowsByPrefix[prefix] = [];
+                if (prefix === 'collectFee') window._collectFeeHeadRows = [];
+                updateCollectFeeBalancePreview(prefix);
+                return;
+            }
+
+            const isMulti = document.getElementById(`${prefix}MultiMode`)?.checked;
+            const rows = [];
+            headNames.forEach(type => {
+                const hd = dues.filter(d => d.fee_type === type);
+                const gross = hd.reduce((s, d) => s + (d.assigned_amount || 0), 0);
+                const disc = hd.reduce((s, d) => s + (d.discount_amount || 0), 0);
+                const paid = hd.reduce((s, d) => s + d.paid_amount, 0);
+                const bal = hd.reduce((s, d) => s + d.due_amount, 0);
+                const first = hd[0] || {};
+                rows.push({
+                    fee_type: type,
+                    categoryId: first.categoryId,
+                    assignmentId: first.assignmentId,
+                    gross, disc, paid, bal,
+                    dueDate: first.due_date
+                });
+            });
+            window._feeHeadRowsByPrefix[prefix] = rows;
+            if (prefix === 'collectFee') window._collectFeeHeadRows = rows;
+
+            let defaultCatId = window._collectFeePreselectCatId;
+            if (!defaultCatId) {
+                const firstUnpaid = rows.find(r => r.bal > 0.01) || rows[0];
+                defaultCatId = firstUnpaid ? firstUnpaid.categoryId : null;
+            }
+
+            const radioName = `${prefix}HeadChoice`;
+            tbody.innerHTML = '';
+            rows.forEach((r) => {
+                const isSelected = r.categoryId === defaultCatId;
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="text-align:center;">
+                        <input type="${isMulti ? 'checkbox' : 'radio'}" name="${radioName}" class="${prefix}-head-check"
+                            data-cat-id="${r.categoryId || ''}" data-assign-id="${r.assignmentId || ''}" data-bal="${r.bal.toFixed(2)}"
+                            ${isSelected && r.bal > 0.01 ? 'checked' : ''} ${r.bal <= 0.01 ? 'disabled' : ''} />
+                    </td>
+                    <td>
+                        <b>${escapeHtml(r.fee_type)}</b>
+                        ${r.dueDate ? `<div style="font-size:10px; color:#64748b;">Due: ${escapeHtml(r.dueDate)}</div>` : ''}
+                    </td>
+                    <td style="text-align:right;">₹${r.gross.toFixed(2)}</td>
+                    <td style="text-align:right; color:#0284c7;">₹${r.disc.toFixed(2)}</td>
+                    <td style="text-align:right; color:#0f7b3a;">₹${r.paid.toFixed(2)}</td>
+                    <td style="text-align:right; font-weight:700; color:${r.bal > 0.01 ? '#b13e3e' : '#0f7b3a'};">₹${r.bal.toFixed(2)}</td>
+                    <td class="${prefix}-alloc-cell" style="display:${isMulti ? 'table-cell' : 'none'}; text-align:right;">
+                        <input type="number" class="${prefix}-alloc-input" data-cat-id="${r.categoryId || ''}" min="0" max="${r.bal.toFixed(2)}" step="0.01"
+                            value="${isSelected && r.bal > 0.01 ? r.bal.toFixed(2) : ''}" ${r.bal <= 0.01 ? 'disabled' : ''}
+                            style="width:105px; padding:4px 6px; border:1px solid #cbd5e1; border-radius:6px; text-align:right;" />
+                    </td>
+                `;
+                tr.querySelector(`.${prefix}-head-check`)?.addEventListener('change', () => {
+                    if (!isMulti) {
+                        const amtEl = document.getElementById(`${prefix}Amount`);
+                        if (amtEl) amtEl.value = r.bal > 0.01 ? r.bal.toFixed(2) : '';
+                    }
+                    updateCollectFeeBalancePreview(prefix);
+                });
+                tr.querySelector(`.${prefix}-alloc-input`)?.addEventListener('input', () => {
+                    const chk = tr.querySelector(`.${prefix}-head-check`);
+                    const val = parseFloat(tr.querySelector(`.${prefix}-alloc-input`).value) || 0;
+                    if (chk) chk.checked = val > 0;
+                    updateCollectFeeBalancePreview(prefix);
+                });
+                tbody.appendChild(tr);
+            });
+
+            if (!isMulti) {
+                const chosen = rows.find(r => r.categoryId === defaultCatId && r.bal > 0.01);
+                const amtEl = document.getElementById(`${prefix}Amount`);
+                if (chosen && amtEl) amtEl.value = chosen.bal.toFixed(2);
+            }
+            updateCollectFeeBalancePreview(prefix);
+        };
+
+        window.toggleCollectFeeMultiMode = function(prefix = 'collectFee') {
+            const isMulti = document.getElementById(`${prefix}MultiMode`)?.checked;
+            const allocHeader = document.getElementById(`${prefix}AllocHeader`);
+            const amtGroup = document.getElementById(`${prefix}AmountGroup`);
+            if (allocHeader) allocHeader.style.display = isMulti ? 'table-cell' : 'none';
+            if (amtGroup) amtGroup.style.display = isMulti ? 'none' : 'flex';
+            if (document.getElementById(`${prefix}StudentAdm`)?.value) {
+                refreshCollectFeeHeads(prefix);
+            }
+        };
+
+        window.toggleCollectFeeRefField = function(prefix = 'collectFee') {
+            const mode = document.getElementById(`${prefix}Mode`)?.value || 'cash';
+            const grp = document.getElementById(`${prefix}RefGroup`);
+            if (grp) grp.style.display = mode === 'cash' ? 'none' : 'flex';
+        };
+
+        window.updateCollectFeeBalancePreview = function(prefix = 'collectFee') {
+            const preview = document.getElementById(`${prefix}ValidationPreview`);
+            if (!preview) return;
+            const rows = window._feeHeadRowsByPrefix[prefix] || (prefix === 'collectFee' ? (window._collectFeeHeadRows || []) : []);
+            const totalBefore = rows.reduce((s, r) => s + r.bal, 0);
+            const isMulti = document.getElementById(`${prefix}MultiMode`)?.checked;
+
+            let payTotal = 0;
+            let errorMsg = '';
+            if (isMulti) {
+                document.querySelectorAll(`.${prefix}-alloc-input`).forEach(inp => {
+                    const v = parseFloat(inp.value) || 0;
+                    const max = parseFloat(inp.max) || 0;
+                    if (v > max + 0.01) errorMsg = `Allocation ₹${v.toFixed(2)} exceeds head balance ₹${max.toFixed(2)}.`;
+                    payTotal += v;
+                });
+            } else {
+                const checked = document.querySelector(`input[name="${prefix}HeadChoice"]:checked`);
+                payTotal = parseFloat(document.getElementById(`${prefix}Amount`)?.value) || 0;
+                if (checked) {
+                    const maxBal = parseFloat(checked.dataset.bal) || 0;
+                    if (payTotal > maxBal + 0.01) errorMsg = `Amount ₹${payTotal.toFixed(2)} exceeds selected head balance ₹${maxBal.toFixed(2)}.`;
+                }
+            }
+
+            const remainingAfter = Math.max(0, totalBefore - payTotal);
+            preview.innerHTML = errorMsg
+                ? `<span style="color:#b91c1c; font-weight:700;">⚠️ ${escapeHtml(errorMsg)}</span>`
+                : `<span>Previous Balance: <b>₹${totalBefore.toFixed(2)}</b></span><span>Paying Now: <b style="color:#0f7b3a;">₹${payTotal.toFixed(2)}</b></span><span>Remaining After Payment: <b style="color:#0b2a4a;">₹${remainingAfter.toFixed(2)}</b></span>`;
+        };
+
+        async function executeStudentFeeCollection({ prefix, payDate, closeModalOnSuccess }) {
+            if (_isCollectingFee) return;
+            const adm = document.getElementById(`${prefix}StudentAdm`)?.value || '';
+            const year = document.getElementById(`${prefix}AcademicYear`)?.value || '';
+            const baseReceiptNo = (document.getElementById(`${prefix}ReceiptNo`)?.value || '').trim();
+            const feeMonth = document.getElementById(`${prefix}Month`)?.value || '';
+            const mode = document.getElementById(`${prefix}Mode`)?.value || 'cash';
+            const refNo = (document.getElementById(`${prefix}RefNo`)?.value || '').trim();
+            const remarks = (document.getElementById(`${prefix}Remarks`)?.value || '').trim();
+
+            const student = students.find(s => s.admissionNumber === adm);
+            if (!student) {
+                showToast("❌ Please select a valid student.", "error");
+                return;
+            }
+            if ((student.status || 'active') === 'inactive') {
+                showToast("❌ Cannot collect fees for an inactive student.", "error");
+                return;
+            }
+            if (!year || !payDate) {
+                showToast("❌ Academic year and payment date are required.", "error");
+                return;
+            }
+            if (!baseReceiptNo) {
+                showToast("❌ Receipt number is required.", "error");
+                return;
+            }
+            if (feePayments.some(fp => (fp.receipt_number || '').toLowerCase() === baseReceiptNo.toLowerCase())) {
+                showToast(`❌ Receipt number '${baseReceiptNo}' already exists. Please use a unique receipt number.`, "error");
+                return;
+            }
+            if (mode !== 'cash' && mode !== 'other' && !refNo) {
+                showToast("❌ Reference number (Cheque / UTR / UPI ID) is required for non-cash payments.", "error");
+                return;
+            }
+
+            const headRows = window._feeHeadRowsByPrefix[prefix] || (prefix === 'collectFee' ? (window._collectFeeHeadRows || []) : []);
+            const isMulti = document.getElementById(`${prefix}MultiMode`)?.checked;
+            const allocations = [];
+            if (isMulti) {
+                document.querySelectorAll(`.${prefix}-alloc-input`).forEach(inp => {
+                    const val = parseFloat(inp.value) || 0;
+                    if (val > 0) {
+                        const catId = parseInt(inp.dataset.catId, 10);
+                        const rowMeta = headRows.find(r => r.categoryId === catId);
+                        allocations.push({ rowMeta, amount: val });
+                    }
+                });
+            } else {
+                const checked = document.querySelector(`input[name="${prefix}HeadChoice"]:checked`);
+                const val = parseFloat(document.getElementById(`${prefix}Amount`)?.value);
+                if (!checked) {
+                    showToast("❌ Select a fee head to allocate payment.", "error");
+                    return;
+                }
+                const catId = parseInt(checked.dataset.catId, 10);
+                const rowMeta = headRows.find(r => r.categoryId === catId);
+                allocations.push({ rowMeta, amount: val });
+            }
+
+            if (allocations.length === 0) {
+                showToast("❌ Enter a valid positive amount for at least one fee head.", "error");
+                return;
+            }
+            for (const al of allocations) {
+                if (!al.rowMeta || !al.amount || al.amount <= 0) {
+                    showToast("❌ All allocated fee amounts must be greater than ₹0.", "error");
+                    return;
+                }
+                if (al.amount > al.rowMeta.bal + 0.01) {
+                    showToast(`❌ Payment ₹${al.amount.toFixed(2)} exceeds balance ₹${al.rowMeta.bal.toFixed(2)} for ${al.rowMeta.fee_type}.`, "error");
+                    return;
+                }
+            }
+
+            const btn = document.getElementById(`${prefix}SubmitBtn`);
+            const oldBtnHtml = btn ? btn.innerHTML : '';
+            _isCollectingFee = true;
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '⏳ Recording Payment...';
+            }
+
+            const createdTxIds = [];
+            const prevTotalBalance = headRows.reduce((s, r) => s + r.bal, 0);
+            let runningBalance = prevTotalBalance;
+
+            try {
+                for (let idx = 0; idx < allocations.length; idx++) {
+                    const al = allocations[idx];
+                    const receiptNo = allocations.length > 1 ? `${baseReceiptNo}-${idx + 1}` : baseReceiptNo;
+                    const beforeBal = runningBalance;
+                    runningBalance = Math.max(0, beforeBal - al.amount);
+
+                    let resultTxId = null;
+                    let resultPaymentId = null;
+
+                    if (!isDemoOfflineMode()) {
+                        if (!student.id) {
+                            throw new Error("Student database UUID missing. Please sync with Supabase first.");
+                        }
+                        const res = await window.DataService.recordStudentFeePayment({
+                            student_id: student.id,
+                            academic_year: year,
+                            fee_assignment_id: al.rowMeta.assignmentId || null,
+                            fee_category_id: al.rowMeta.categoryId,
+                            fee_month: feeMonth,
+                            payment_date: payDate,
+                            amount: al.amount,
+                            payment_mode: mode,
+                            receipt_number: receiptNo,
+                            reference_number: refNo || null,
+                            remarks: remarks || null
+                        });
+                        resultTxId = res.transaction_id;
+                        resultPaymentId = res.payment_id;
+                    } else {
+                        resultTxId = getNextId();
+                        resultPaymentId = `demo-fp-${Date.now()}-${idx}`;
+                    }
+
+                    const nowIso = new Date().toISOString();
+                    const bankAmt = ['bank_transfer', 'upi', 'cheque'].includes(mode) ? al.amount : 0;
+                    const chqCount = mode === 'cheque' ? 1 : 0;
+                    const newTx = {
+                        id: resultTxId,
+                        date: payDate,
+                        type: 'income',
+                        particulars: remarks ? `${al.rowMeta.fee_type} Fee — ${student.name} (${student.admissionNumber}) - ${remarks}` : `${al.rowMeta.fee_type} Fee — ${student.name} (${student.admissionNumber})`,
+                        reference: receiptNo,
+                        amount: al.amount,
+                        head: 'Fees',
+                        mainCategory: 'Fees',
+                        subCategory: al.rowMeta.fee_type,
+                        categoryId: al.rowMeta.categoryId,
+                        studentId: student.id || null,
+                        paymentMode: mode,
+                        paymentReference: refNo,
+                        bankAmount: bankAmt,
+                        chequeCount: chqCount,
+                        academicYear: year,
+                        feeMonth: feeMonth,
+                        tags: [mode],
+                        isDeleted: false,
+                        createdBy: currentUser ? currentUser.email : '',
+                        createdAt: nowIso,
+                        updatedBy: currentUser ? currentUser.email : '',
+                        updatedAt: nowIso,
+                        student: {
+                            id: student.id || null,
+                            name: student.name,
+                            admissionNumber: student.admissionNumber,
+                            class: student.class,
+                            section: student.section,
+                            rollNumber: student.rollNumber
+                        },
+                        _receiptMeta: {
+                            previousBalance: beforeBal,
+                            remainingBalance: runningBalance,
+                            paymentMode: mode,
+                            referenceNumber: refNo,
+                            remarks: remarks
+                        }
+                    };
+
+                    if (!transactions.some(t => t.id === resultTxId)) {
+                        transactions.unshift(newTx);
+                    }
+
+                    const newFp = {
+                        id: resultPaymentId,
+                        transaction_id: resultTxId,
+                        student_id: student.id || null,
+                        student_admission_number: student.admissionNumber,
+                        fee_assignment_id: al.rowMeta.assignmentId || null,
+                        fee_category_id: al.rowMeta.categoryId,
+                        academic_year: year,
+                        fee_month: feeMonth,
+                        fee_type: al.rowMeta.fee_type,
+                        amount: al.amount,
+                        payment_date: payDate,
+                        payment_mode: mode,
+                        receipt_number: receiptNo,
+                        reference_number: refNo,
+                        remarks: remarks,
+                        status: 'completed'
+                    };
+                    if (!feePayments.some(fp => fp.transaction_id === resultTxId)) {
+                        feePayments.push(newFp);
+                    }
+                    createdTxIds.push(resultTxId);
+                }
+
+                saveData();
+                if (!isDemoOfflineMode()) {
+                    await syncAllFromSupabase();
+                }
+
+                if (closeModalOnSuccess) {
+                    hideCollectFeeModal();
+                } else {
+                    initIncomeStudentFeePanel(student.admissionNumber, year);
+                }
+                renderAll();
+                if (typeof window._activeLedgerAdm !== 'undefined' && document.getElementById('feeLedgerModal')?.style.display === 'flex') {
+                    showFeeLedger(student.admissionNumber, year);
+                }
+                if (document.getElementById('tab-activity')?.classList.contains('active') && typeof renderActivities === 'function') {
+                    renderActivities();
+                }
+                showToast(`✅ Recorded fee payment (${baseReceiptNo}) for ${student.name}!`, "success");
+                if (createdTxIds.length > 0) {
+                    printFeeReceipts(createdTxIds);
+                }
+            } catch (err) {
+                console.error("Fee collection failed:", err);
+                showToast("❌ Failed to record fee payment: " + (err.message || err), "error");
+            } finally {
+                _isCollectingFee = false;
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = oldBtnHtml || '✅ Record Fee &amp; Print Receipt';
+                }
+            }
+        }
+
+        window.submitCollectFee = function() {
+            const payDate = document.getElementById('collectFeeDate')?.value || '';
+            return executeStudentFeeCollection({ prefix: 'collectFee', payDate, closeModalOnSuccess: true });
+        };
+
+        window.submitIncomeFeeCollection = function() {
+            const payDate = document.getElementById('incomeDate')?.value || '';
+            return executeStudentFeeCollection({ prefix: 'incFee', payDate, closeModalOnSuccess: false });
+        };
+
+        // ════════════════════════════════════════════════════════════════
+        //  STUDENT PAYMENT HISTORY MODAL
+        // ════════════════════════════════════════════════════════════════
+
+        window.openStudentPaymentHistory = function(admissionNo, yearOverride) {
+            const student = students.find(s => s.admissionNumber === admissionNo);
+            if (!student) {
+                showToast("Student not found.", "error");
+                return;
+            }
+            window._activeHistoryStudentAdm = student.admissionNumber;
+            document.getElementById('studentPayHistTitle').textContent = `📜 Payment History — ${student.name} (${student.admissionNumber})`;
+
+            const yearSel = document.getElementById('sphFilterYear');
+            if (yearSel) {
+                const years = new Set([getCurrentAcademicYear()]);
+                studentFeeAssignments.forEach(a => years.add(a.academic_year));
+                feePayments.forEach(p => years.add(p.academic_year));
+                yearSel.innerHTML = '<option value="all">All Years</option>' + Array.from(years).sort().reverse().map(y => `<option value="${y}">${y}</option>`).join('');
+                yearSel.value = yearOverride || 'all';
+            }
+
+            const headSel = document.getElementById('sphFilterHead');
+            if (headSel) {
+                const heads = getActiveFeeTypes();
+                headSel.innerHTML = '<option value="all">All Fee Heads</option>' + heads.map(h => `<option value="${escapeHtml(h)}">${escapeHtml(h)}</option>`).join('');
+            }
+            document.getElementById('sphFilterMode').value = 'all';
+            document.getElementById('sphFilterFrom').value = '';
+            document.getElementById('sphFilterTo').value = '';
+
+            renderStudentPaymentHistoryTable();
+            document.getElementById('studentPaymentHistoryModal').style.display = 'flex';
+        };
+
+        window.hideStudentPaymentHistory = function() {
+            document.getElementById('studentPaymentHistoryModal').style.display = 'none';
+        };
+
+        function getFilteredStudentHistoryRows() {
+            const student = students.find(s => s.admissionNumber === window._activeHistoryStudentAdm);
+            if (!student) return [];
+            const fYear = document.getElementById('sphFilterYear')?.value || 'all';
+            const fHead = document.getElementById('sphFilterHead')?.value || 'all';
+            const fMode = document.getElementById('sphFilterMode')?.value || 'all';
+            const fFrom = document.getElementById('sphFilterFrom')?.value || '';
+            const fTo = document.getElementById('sphFilterTo')?.value || '';
+
+            const rows = [];
+            transactions.forEach(t => {
+                if (t.type !== 'income' || t.mainCategory !== 'Fees') return;
+                const fp = feePayments.find(p => p.transaction_id === t.id);
+                const matchStudent = (student.id && (t.studentId === student.id || (fp && fp.student_id === student.id))) ||
+                    (t.student && t.student.admissionNumber === student.admissionNumber) ||
+                    (fp && fp.student_admission_number === student.admissionNumber);
+                if (!matchStudent) return;
+
+                const ay = (fp && fp.academic_year) || t.academicYear || '';
+                const head = (fp && fp.fee_type) || t.subCategory || 'Fee';
+                const mode = ((fp && fp.payment_mode) || t.paymentMode || 'cash').toLowerCase();
+                if (fYear !== 'all' && ay !== fYear) return;
+                if (fHead !== 'all' && head.toLowerCase() !== fHead.toLowerCase()) return;
+                if (fMode !== 'all' && mode !== fMode.toLowerCase()) return;
+                if (fFrom && t.date < fFrom) return;
+                if (fTo && t.date > fTo) return;
+
+                rows.push({
+                    txId: t.id,
+                    date: t.date,
+                    receiptNo: (fp && fp.receipt_number) || t.reference || 'Receipt',
+                    ay,
+                    head,
+                    amount: t.amount || 0,
+                    mode,
+                    refNo: (fp && fp.reference_number) || '—',
+                    createdBy: (fp && fp.created_by) || t.userEmail || '—',
+                    remarks: (fp && fp.remarks) || t.particulars || '—',
+                    status: t.isDeleted ? 'Reversed/Deleted' : ((fp && fp.status) || 'completed'),
+                    isDeleted: Boolean(t.isDeleted)
+                });
+            });
+            rows.sort((a, b) => new Date(b.date) - new Date(a.date));
+            return rows;
+        }
+
+        window.renderStudentPaymentHistoryTable = function() {
+            const tbody = document.getElementById('sphTableBody');
+            const summary = document.getElementById('sphSummary');
+            if (!tbody) return;
+            const rows = getFilteredStudentHistoryRows();
+            if (rows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="11" class="text-center text-muted" style="padding:20px;">No payment history matching filters.</td></tr>';
+                if (summary) summary.textContent = '0 payments found.';
+                return;
+            }
+            let activeTotal = 0;
+            tbody.innerHTML = rows.map(r => {
+                if (!r.isDeleted) activeTotal += r.amount;
+                return `
+                    <tr style="${r.isDeleted ? 'opacity:0.6; background:#fef2f2;' : ''}">
+                        <td>${escapeHtml(r.date)}</td>
+                        <td style="font-family:monospace;">${escapeHtml(r.receiptNo)}</td>
+                        <td>${escapeHtml(r.ay)}</td>
+                        <td><b>${escapeHtml(r.head)}</b></td>
+                        <td style="text-align:right; font-weight:700; color:${r.isDeleted ? '#991b1b' : '#0f7b3a'};">₹${r.amount.toFixed(2)}</td>
+                        <td>${escapeHtml(r.mode.toUpperCase())}</td>
+                        <td>${escapeHtml(r.refNo)}</td>
+                        <td style="font-size:11px;">${escapeHtml(String(r.createdBy).slice(0, 18))}</td>
+                        <td>${escapeHtml(r.remarks)}</td>
+                        <td><span class="badge-status ${r.isDeleted ? 'pending' : 'paid'}">${escapeHtml(r.status)}</span></td>
+                        <td>${!r.isDeleted ? `<button type="button" class="btn btn-outline btn-xs" onclick="printReceiptForTransaction('${escapeHtml(String(r.txId))}')">🖨️</button>` : '—'}</td>
+                    </tr>
+                `;
+            }).join('');
+            if (summary) summary.innerHTML = `Showing <b>${rows.length}</b> record(s) | Active Total Collected: <b style="color:#0f7b3a;">₹${activeTotal.toFixed(2)}</b>`;
+        };
+
+        window.exportStudentPaymentHistoryCSV = function() {
+            const adm = window._activeHistoryStudentAdm || 'student';
+            const rows = getFilteredStudentHistoryRows();
+            const csvRows = [['Date', 'Receipt No', 'Academic Year', 'Fee Head', 'Amount', 'Mode', 'Ref No', 'Remarks', 'Status']];
+            rows.forEach(r => csvRows.push([r.date, r.receiptNo, r.ay, r.head, r.amount.toFixed(2), r.mode, r.refNo, r.remarks, r.status]));
+            const csv = csvRows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+            downloadFile(csv, `student_payment_history_${adm}.csv`, 'text/csv;charset=utf-8;');
+        };
+
+        window.printStudentPaymentHistory = function() {
+            const adm = window._activeHistoryStudentAdm || '';
+            const student = students.find(s => s.admissionNumber === adm);
+            const tableHtml = document.getElementById('sphTableBody')?.closest('table')?.outerHTML || '';
+            const win = window.open('', '_blank');
+            if (!win) return;
+            win.document.write(`
+                <html><head><title>Payment History - ${escapeHtml(adm)}</title>
+                <style>body{font-family:'Segoe UI',sans-serif;padding:24px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}th{background:#f1f5f9}</style>
+                </head><body onload="window.print()">
+                <h2>${escapeHtml(getActiveSchoolName())} — Student Payment History</h2>
+                <p><b>Student:</b> ${escapeHtml(student ? student.name : adm)} | <b>Admission No:</b> ${escapeHtml(adm)}</p>
+                ${tableHtml}
+                </body></html>
+            `);
+            win.document.close();
         };
 
         // ════════════════════════════════════════════════════════════════
@@ -7075,67 +9191,98 @@
          * Extract and format common data required by all receipt templates.
          */
         function getReceiptCommonData(tx) {
-            const receiptNo = tx.reference || '';
-            const txDate = tx.date || '';
+            const fp = feePayments.find(p => p.transaction_id === tx.id) || null;
+            const receiptNo = (fp && fp.receipt_number) || tx.reference || '';
+            const txDate = (fp && fp.payment_date) || tx.date || '';
             const amount = tx.amount || 0;
-            
-            // Determine student name, class, section
+
+            const studentObj = tx.student || students.find(s => (tx.studentId && s.id === tx.studentId) || (fp && fp.student_id && s.id === fp.student_id) || (fp && fp.student_admission_number && s.admissionNumber === fp.student_admission_number)) || null;
+
             let studentName = '';
+            let admissionNo = '';
             let classSection = '';
             let studentClass = '';
-            if (tx.student) {
-                studentName = tx.student.name || '';
-                studentClass = tx.student.class || '';
-                const sec = tx.student.section || '';
+            if (studentObj) {
+                studentName = studentObj.name || '';
+                admissionNo = studentObj.admissionNumber || '';
+                studentClass = studentObj.class || '';
+                const sec = studentObj.section || '';
                 classSection = studentClass ? (sec ? `${studentClass} - ${sec}` : studentClass) : '';
             } else {
                 studentName = (tx.particulars || '').replace(/@/g, '').replace(/#\S+/g, '').trim();
+                admissionNo = (fp && fp.student_admission_number) || '';
             }
 
-            // Split amount into rupees and paise
+            const academicYear = (fp && fp.academic_year) || tx.academicYear || getCurrentAcademicYear();
+            const paymentMode = ((tx._receiptMeta && tx._receiptMeta.paymentMode) || (fp && fp.payment_mode) || tx.paymentMode || '').toUpperCase();
+            const referenceNo = (tx._receiptMeta && tx._receiptMeta.referenceNumber) || (fp && fp.reference_number) || '';
+            const remarks = (tx._receiptMeta && tx._receiptMeta.remarks) || (fp && fp.remarks) || '';
+
+            let previousBalance = (tx._receiptMeta && tx._receiptMeta.previousBalance !== undefined) ? tx._receiptMeta.previousBalance : null;
+            let remainingBalance = (tx._receiptMeta && tx._receiptMeta.remainingBalance !== undefined) ? tx._receiptMeta.remainingBalance : null;
+            if (remainingBalance === null && studentObj) {
+                const rem = getStudentFeeDues(studentObj, academicYear).reduce((s, d) => s + d.due_amount, 0);
+                remainingBalance = rem;
+                previousBalance = rem + amount;
+            }
+
+            const isReprint = (tx._printedCount || 0) > 0;
+
             const rupees = Math.floor(amount);
             const paise = Math.round((amount - rupees) * 100);
             const rupeesStr = rupees.toLocaleString('en-IN');
             const paiseStr = paise > 0 ? String(paise).padStart(2, '0') : '00';
             const amountInWords = numberToWords(amount);
 
-            // Format date
             let dateFormatted = '';
             if (txDate) {
                 try {
                     const d = new Date(txDate + 'T00:00:00');
                     dateFormatted = d.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-                } catch(e) { 
-                    dateFormatted = txDate; 
+                } catch(e) {
+                    dateFormatted = txDate;
                 }
             }
-            
-            // Parse payment details
-            const payment = getPaymentDetails(tx);
 
-            // Format Cash/Cheque No & Bank values
+            const payment = getPaymentDetails(tx);
             let cashChequeVal = '&nbsp;';
-            if (payment.isCash) {
+            if (referenceNo) {
+                cashChequeVal = `${paymentMode || 'REF'}: ${referenceNo}`;
+            } else if (paymentMode === 'CASH' || payment.isCash) {
                 cashChequeVal = 'CASH';
+            } else if (paymentMode && paymentMode !== 'CASH') {
+                cashChequeVal = paymentMode;
             } else if (payment.isOnline) {
                 cashChequeVal = 'ONLINE';
             } else if (payment.chequeNo) {
                 cashChequeVal = payment.chequeNo;
             }
-            
+
             let bankVal = payment.bank || '&nbsp;';
+            const balanceMetaHtml = (remainingBalance !== null)
+                ? `<div style="margin-top:8px; padding-top:6px; border-top:1px dashed rgba(0,0,0,0.2); font-size:11px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px;">
+                    <span><b>Previous Balance:</b> ₹${Number(previousBalance || 0).toFixed(2)}</span>
+                    <span><b>Paid:</b> ₹${Number(amount).toFixed(2)}</span>
+                    <span><b>Remaining Balance:</b> ₹${Number(remainingBalance || 0).toFixed(2)}</span>
+                   </div>`
+                : '';
 
             return {
                 receiptNo: escapeHtml(receiptNo),
                 dateFormatted: escapeHtml(dateFormatted),
                 studentName: escapeHtml(studentName),
+                admissionNo: escapeHtml(admissionNo),
+                academicYear: escapeHtml(academicYear),
                 studentClass: escapeHtml(studentClass),
                 classSection: escapeHtml(classSection),
                 rupeesStr,
                 paiseStr,
                 amountInWords: escapeHtml(amountInWords),
-                cashChequeVal: payment.chequeNo ? escapeHtml(payment.chequeNo) : cashChequeVal,
-                bankVal: payment.bank ? escapeHtml(payment.bank) : bankVal
+                cashChequeVal: escapeHtml(cashChequeVal) === '&amp;nbsp;' ? '&nbsp;' : escapeHtml(cashChequeVal),
+                bankVal: payment.bank ? escapeHtml(payment.bank) : bankVal,
+                remarks: escapeHtml(remarks),
+                balanceMetaHtml,
+                reprintTag: isReprint ? ' <span style="font-size:10px; border:1px solid currentColor; padding:1px 5px; border-radius:4px; margin-left:6px;">REPRINT</span>' : ''
             };
         }
 
@@ -7171,13 +9318,16 @@
 
                 <!-- TUITION FEE RECEIPT title -->
                 <div class="receipt-title-box">
-                    <span>TUITION FEE RECEIPT</span>
+                    <span>TUITION FEE RECEIPT${data.reprintTag}</span>
                 </div>
 
                 <!-- Field rows: No. and Date -->
                 <div class="receipt-field-row">
                     <span class="rf-label">No.</span>
-                    <span class="rf-value" style="max-width: 220px;">${data.receiptNo}</span>
+                    <span class="rf-value" style="max-width: 180px;">${data.receiptNo}</span>
+                    <span class="rf-spacer"></span>
+                    <span class="rf-label">Adm No:</span>
+                    <span class="rf-value" style="max-width: 120px;">${data.admissionNo || '—'}</span>
                     <span class="rf-spacer"></span>
                     <span class="rf-label">Date:</span>
                     <span class="rf-value">${data.dateFormatted}</span>
@@ -7187,6 +9337,9 @@
                 <div class="receipt-field-row">
                     <span class="rf-label">Student Name:</span>
                     <span class="rf-value">${data.studentName}</span>
+                    <span class="rf-spacer"></span>
+                    <span class="rf-label">AY:</span>
+                    <span class="rf-value" style="max-width: 90px;">${data.academicYear}</span>
                 </div>
 
                 <!-- Class / Section -->
@@ -7197,7 +9350,7 @@
 
                 <!-- Cash / Cheq. No -->
                 <div class="receipt-field-row">
-                    <span class="rf-label">Cash/Cheq. No.</span>
+                    <span class="rf-label">Mode / Ref No.</span>
                     <span class="rf-value">${data.cashChequeVal}</span>
                 </div>
 
@@ -7221,12 +9374,14 @@
                             <td class="particulars-cell">
                                 <div style="display: flex; flex-direction: column; min-height: 180px; height: 100%;">
                                     <div class="fee-type-label">TUITION FEE</div>
+                                    ${data.remarks ? `<div style="font-size:11px; margin-top:4px;">Remarks: ${data.remarks}</div>` : ''}
                                     <div class="term-checkboxes">
                                         <label><span class="term-box"></span> 1<sup>st</sup> Term</label>
                                         <label><span class="term-box"></span> 2<sup>nd</sup> Term</label>
                                         <label><span class="term-box"></span> 3<sup>rd</sup> Term</label>
                                     </div>
-                                    <div style="margin-top: auto; padding-top: 30px;">
+                                    ${data.balanceMetaHtml}
+                                    <div style="margin-top: auto; padding-top: 20px;">
                                         <span class="non-refundable">NON REFUNDABLE</span>
                                     </div>
                                 </div>
@@ -7289,14 +9444,17 @@
                 <div style="text-align: center; margin: 10px 0 14px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
                     <div style="font-size: 20px; font-weight: 700; letter-spacing: 2px; margin-bottom: 4px;">BUS</div>
                     <div class="receipt-title-box" style="margin: 0;">
-                        <span>FEE RECEIPT</span>
+                        <span>FEE RECEIPT${data.reprintTag}</span>
                     </div>
                 </div>
 
                 <!-- Field rows: No. TRA and Date -->
                 <div class="receipt-field-row">
                     <span class="rf-label">No. TRA</span>
-                    <span class="rf-value" style="max-width: 220px;">${data.receiptNo}</span>
+                    <span class="rf-value" style="max-width: 170px;">${data.receiptNo}</span>
+                    <span class="rf-spacer"></span>
+                    <span class="rf-label">Adm No:</span>
+                    <span class="rf-value" style="max-width: 110px;">${data.admissionNo || '—'}</span>
                     <span class="rf-spacer"></span>
                     <span class="rf-label">Date :</span>
                     <span class="rf-value">${data.dateFormatted}</span>
@@ -7313,11 +9471,11 @@
 
                 <!-- Cash / Cheq. No & Bank -->
                 <div class="receipt-field-row">
-                    <span class="rf-label">Cash/Cheq. No.</span>
+                    <span class="rf-label">Mode / Ref No.</span>
                     <span class="rf-value">${data.cashChequeVal}</span>
                     <span class="rf-spacer"></span>
-                    <span class="rf-label">Bank:</span>
-                    <span class="rf-value">${data.bankVal}</span>
+                    <span class="rf-label">AY / Bank:</span>
+                    <span class="rf-value">${data.academicYear}${data.bankVal && data.bankVal !== '&nbsp;' ? ' | ' + data.bankVal : ''}</span>
                 </div>
 
                 <!-- Particulars Table -->
@@ -7334,11 +9492,13 @@
                             <td class="particulars-cell">
                                 <div style="display: flex; flex-direction: column; min-height: 180px; height: 100%;">
                                     <div class="fee-type-label">TRANSPORT FEE</div>
+                                    ${data.remarks ? `<div style="font-size:11px; margin-top:4px;">Remarks: ${data.remarks}</div>` : ''}
                                     <div class="term-checkboxes">
                                         <label><span class="term-box"></span> 1<sup>st</sup> Term</label>
                                         <label><span class="term-box"></span> 2<sup>nd</sup> Term</label>
                                     </div>
-                                    <div style="margin-top: auto; padding-top: 30px;">
+                                    ${data.balanceMetaHtml}
+                                    <div style="margin-top: auto; padding-top: 20px;">
                                         <span class="non-refundable">NON REFUNDABLE</span>
                                     </div>
                                 </div>
@@ -7401,13 +9561,16 @@
 
                 <!-- Title -->
                 <div class="receipt-title-box">
-                    <span>${feeLabel} RECEIPT</span>
+                    <span>${feeLabel} RECEIPT${data.reprintTag}</span>
                 </div>
 
                 <!-- Field rows: No. and Date -->
                 <div class="receipt-field-row">
                     <span class="rf-label">No.</span>
-                    <span class="rf-value" style="max-width: 220px;">${data.receiptNo}</span>
+                    <span class="rf-value" style="max-width: 180px;">${data.receiptNo}</span>
+                    <span class="rf-spacer"></span>
+                    <span class="rf-label">Adm No:</span>
+                    <span class="rf-value" style="max-width: 110px;">${data.admissionNo || '—'}</span>
                     <span class="rf-spacer"></span>
                     <span class="rf-label">Date:</span>
                     <span class="rf-value">${data.dateFormatted}</span>
@@ -7417,6 +9580,9 @@
                 <div class="receipt-field-row">
                     <span class="rf-label">Student Name:</span>
                     <span class="rf-value">${data.studentName}</span>
+                    <span class="rf-spacer"></span>
+                    <span class="rf-label">AY:</span>
+                    <span class="rf-value" style="max-width: 90px;">${data.academicYear}</span>
                 </div>
 
                 <!-- Class / Section -->
@@ -7427,7 +9593,7 @@
 
                 <!-- Cash / Cheq. No & Bank -->
                 <div class="receipt-field-row">
-                    <span class="rf-label">Cash/Cheq. No.</span>
+                    <span class="rf-label">Mode / Ref No.</span>
                     <span class="rf-value">${data.cashChequeVal}</span>
                     <span class="rf-spacer"></span>
                     <span class="rf-label">Bank:</span>
@@ -7448,12 +9614,14 @@
                             <td class="particulars-cell">
                                 <div style="display: flex; flex-direction: column; min-height: 180px; height: 100%;">
                                     <div class="fee-type-label">${feeLabel}</div>
+                                    ${data.remarks ? `<div style="font-size:11px; margin-top:4px;">Remarks: ${data.remarks}</div>` : ''}
                                     <div class="term-checkboxes">
                                         <label><span class="term-box"></span> 1<sup>st</sup> Term</label>
                                         <label><span class="term-box"></span> 2<sup>nd</sup> Term</label>
                                         <label><span class="term-box"></span> 3<sup>rd</sup> Term</label>
                                     </div>
-                                    <div style="margin-top: auto; padding-top: 30px;">
+                                    ${data.balanceMetaHtml}
+                                    <div style="margin-top: auto; padding-top: 20px;">
                                         <span class="non-refundable">NON REFUNDABLE</span>
                                     </div>
                                 </div>
@@ -7529,13 +9697,14 @@
             let html = '';
 
             ids.forEach(id => {
-                const tx = transactions.find(t => t.id === id);
-                if (!tx) return;
+                const tx = transactions.find(t => String(t.id) === String(id));
+                if (!tx || tx.isDeleted) return;
                 html += generateReceiptHTML(tx);
+                tx._printedCount = (tx._printedCount || 0) + 1;
             });
 
             if (!html) {
-                showToast('No fee transactions found to print.', 'error');
+                showToast('No active saved fee receipt found to print (deleted or unsaved transactions cannot generate receipts).', 'error');
                 return;
             }
 
@@ -7596,6 +9765,9 @@
                     }
                     if (this.dataset.tab === 'settings') {
                         renderSettingsCategories();
+                        if (typeof renderSettingsFacultyCategories === 'function') {
+                            renderSettingsFacultyCategories();
+                        }
                         renderSettingsTags();
                         updateStudentCountDisplay();
                     }

@@ -2375,41 +2375,156 @@
 
             <!-- ─── INCOME ─── -->
             <section class="tab-content" id="tab-income">
-                <div class="section-title">💰 Bulk Income Entry <small>– add multiple receipts at once</small></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:14px;">
+                    <div class="section-title" style="margin-bottom:0;">💰 Income Entry <small>– general receipts &amp; student fee collection</small></div>
+                    <div class="sub-tabs" id="incomeModeTabs" style="margin-bottom:0;">
+                        <button type="button" id="incModeBtnGeneral" class="sub-tab-btn active" onclick="switchIncomeEntryMode('general')">🧾 General Income</button>
+                        <button type="button" id="incModeBtnStudentFee" class="sub-tab-btn" onclick="switchIncomeEntryMode('student-fee')">🎓 New Student Fee Collection</button>
+                    </div>
+                </div>
+
                 <div class="form-row">
-                    <div class="field">
+                    <div class="field" style="max-width:200px;">
                         <label>📅 Date</label>
                         <input type="date" id="incomeDate" />
                     </div>
-                    <div class="field" style="flex:0 0 180px;">
-                        <label>🔓 Opening Balance (₹)</label>
-                        <input type="number" id="incomeOpening" step="0.01" placeholder="e.g. 41687" />
-                    </div>
-                    <div class="field" style="flex:0 0 auto;">
-                        <button class="btn btn-primary" onclick="addIncomeRow()">＋ Add Row</button>
-                    </div>
-                    <div class="field" style="flex:0 0 auto;">
-                        <button class="btn btn-success" onclick="submitIncomeBulk()">✅ Submit All</button>
+                    <div id="incomeGeneralControls" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; flex:1;">
+                        <div class="field" style="flex:0 0 180px;">
+                            <label>🔓 Opening Balance (₹)</label>
+                            <input type="number" id="incomeOpening" step="0.01" placeholder="e.g. 41687" />
+                        </div>
+                        <div class="field" style="flex:0 0 auto;">
+                            <button type="button" class="btn btn-primary" onclick="addIncomeRow()">＋ Add Row</button>
+                        </div>
+                        <div class="field" style="flex:0 0 auto;">
+                            <button type="button" id="incomeSubmitAllBtn" class="btn btn-success" onclick="submitIncomeBulk()">✅ Submit All</button>
+                        </div>
                     </div>
                 </div>
-                <div class="bulk-table-wrap">
-                    <table class="bulk-table" id="incomeTable">
-                        <thead>
-                            <tr>
-                                <th style="min-width:100px;">Receipt No.</th>
-                                <th style="min-width:160px;">Particulars</th>
-                                <th style="min-width:100px;">Amount (₹)</th>
-                                <th style="min-width:100px;">Mode</th>
-                                <th style="min-width:120px;">Head</th>
-                                <th style="min-width:100px;">Attachment</th>
-                                <th style="width:70px;">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody id="incomeTableBody">
-                            <!-- rows added by JS -->
-                        </tbody>
-                    </table>
+
+                <!-- Mode 1: General Income Bulk Table -->
+                <div id="incomeGeneralPanel">
+                    <div class="bulk-table-wrap">
+                        <table class="bulk-table" id="incomeTable">
+                            <thead>
+                                <tr>
+                                    <th style="min-width:100px;">Receipt No.</th>
+                                    <th style="min-width:160px;">Particulars</th>
+                                    <th style="min-width:100px;">Amount (₹)</th>
+                                    <th style="min-width:110px;">Mode</th>
+                                    <th style="min-width:120px;">Head</th>
+                                    <th style="min-width:100px;">Attachment</th>
+                                    <th style="width:70px;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="incomeTableBody">
+                                <!-- rows added by JS -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
+
+                <!-- Mode 2: Integrated Student Fee Collection Workflow -->
+                <div id="incomeStudentFeePanel" style="display:none; background:#fff; border:1px solid #cbd5e1; border-radius:14px; padding:18px; margin-bottom:16px; box-shadow:0 4px 16px rgba(15,23,42,0.04);">
+                    <div style="display:flex; flex-direction:column; gap:14px;">
+                        <!-- Step 1: Student Search & Identity -->
+                        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:12px 14px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+                                <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Step 1 — Select Student (Search by Admission No, Name, Roll No, Class)</label>
+                                <div style="display:flex; align-items:center; gap:6px;">
+                                    <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Academic Year:</label>
+                                    <select id="incFeeAcademicYear" onchange="refreshCollectFeeHeads('incFee')" style="padding:4px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px; background:#fff;"></select>
+                                </div>
+                            </div>
+                            <div style="position:relative;">
+                                <input type="text" id="incFeeStudentSearch" placeholder="Type Admission No (e.g. ADM-2026-001) or Student Name..."
+                                    oninput="searchCollectFeeStudents(this.value, 'incFee')" onfocus="searchCollectFeeStudents(this.value, 'incFee')" autocomplete="off"
+                                    style="width:100%; padding:9px 12px; border:1px solid #cbd5e1; border-radius:10px; font-size:13px; background:#fff;" />
+                                <div id="incFeeStudentDropdown" style="display:none; position:absolute; top:105%; left:0; right:0; background:#fff; border:1px solid #cbd5e1; border-radius:10px; box-shadow:0 10px 25px rgba(0,0,0,0.12); z-index:60; max-height:220px; overflow-y:auto;"></div>
+                            </div>
+                            <input type="hidden" id="incFeeStudentUuid" />
+                            <input type="hidden" id="incFeeStudentAdm" />
+                            <div id="incFeeSelectedStudentBanner" style="margin-top:10px; display:none; background:#fff; border:1px solid #bae6fd; border-radius:10px; padding:10px 12px;"></div>
+                        </div>
+
+                        <!-- Step 2: Assigned Fee Heads -->
+                        <div>
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
+                                <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Step 2 — Fee Assignments &amp; Balance Allocation</label>
+                                <label style="display:flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:#0b2a4a; cursor:pointer;">
+                                    <input type="checkbox" id="incFeeMultiMode" onchange="toggleCollectFeeMultiMode('incFee')" />
+                                    Allocate across multiple fee heads
+                                </label>
+                            </div>
+                            <div class="bulk-table-wrap" style="margin:0; max-height:210px; overflow:auto;">
+                                <table class="bulk-table" style="width:100%; font-size:12px;">
+                                    <thead>
+                                        <tr>
+                                            <th style="width:36px;">Select</th>
+                                            <th>Fee Head</th>
+                                            <th style="text-align:right;">Assigned</th>
+                                            <th style="text-align:right;">Discount</th>
+                                            <th style="text-align:right;">Paid</th>
+                                            <th style="text-align:right;">Balance</th>
+                                            <th id="incFeeAllocHeader" style="display:none; text-align:right; width:120px;">Pay Now (₹)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="incFeeHeadsBody">
+                                        <tr><td colspan="7" class="text-center text-muted" style="padding:16px;">Search and select a student above to load assigned fees.</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Step 3: Income Payment Details -->
+                        <div style="background:#f9fbfe; border:1px solid #e6ecf3; border-radius:12px; padding:14px;">
+                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:12px;">
+                                <div class="field">
+                                    <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Receipt Number *</label>
+                                    <input type="text" id="incFeeReceiptNo" required placeholder="e.g. REC-1001" style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%; font-family:monospace;" />
+                                </div>
+                                <div class="field" id="incFeeAmountGroup">
+                                    <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Amount Received (₹) *</label>
+                                    <input type="number" id="incFeeAmount" min="0.01" step="0.01" oninput="updateCollectFeeBalancePreview('incFee')" placeholder="0.00" style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%; font-weight:700; color:#0b2a4a;" />
+                                </div>
+                                <div class="field">
+                                    <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Fee Month / Installment</label>
+                                    <select id="incFeeMonth" style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%; background:#fff;">
+                                        <option value="">Annual / Full</option>
+                                        <option value="April">April</option><option value="May">May</option><option value="June">June</option>
+                                        <option value="July">July</option><option value="August">August</option><option value="September">September</option>
+                                        <option value="October">October</option><option value="November">November</option><option value="December">December</option>
+                                        <option value="January">January</option><option value="February">February</option><option value="March">March</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Payment Mode *</label>
+                                    <select id="incFeeMode" onchange="toggleCollectFeeRefField('incFee')" style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%; background:#fff;">
+                                        <option value="cash">💵 Cash</option>
+                                        <option value="bank_transfer">🏦 Bank Transfer</option>
+                                        <option value="cheque">📜 Cheque</option>
+                                        <option value="upi">📱 UPI / Online</option>
+                                        <option value="other">🔹 Other</option>
+                                    </select>
+                                </div>
+                                <div class="field" id="incFeeRefGroup" style="display:none;">
+                                    <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Transaction / Cheque / UPI Ref</label>
+                                    <input type="text" id="incFeeRefNo" placeholder="UTR / Cheque / UPI ID" style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%;" />
+                                </div>
+                            </div>
+                            <div class="field" style="margin-top:10px;">
+                                <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Remarks</label>
+                                <input type="text" id="incFeeRemarks" placeholder="Optional notes or installment details" style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%;" />
+                            </div>
+                            <div id="incFeeValidationPreview" style="margin-top:10px; font-size:12px; color:#475569; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;"></div>
+                            <div style="margin-top:14px; display:flex; justify-content:flex-end; gap:10px;">
+                                <button type="button" class="btn btn-outline" onclick="initIncomeStudentFeePanel()">Reset Form</button>
+                                <button type="button" id="incFeeSubmitBtn" class="btn btn-success" onclick="submitIncomeFeeCollection()" style="padding:9px 22px; font-weight:600;">✅ Save Fee Income &amp; Print Receipt</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="incomePreview" class="mt-12 text-muted text-sm"></div>
                 <div class="mt-12">
                     <h4 style="font-weight:600;font-size:14px;margin-bottom:6px;">📋 Recent Income</h4>
@@ -2419,30 +2534,37 @@
 
             <!-- ─── EXPENSES ─── -->
             <section class="tab-content" id="tab-expense">
-                <div class="section-title">💸 Bulk Expense Entry <small>– add multiple vouchers at once</small></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:14px;">
+                    <div class="section-title" style="margin-bottom:0;">💸 Expense Entry <small>– school expenses &amp; faculty-linked payouts</small></div>
+                    <div class="sub-tabs" id="expenseModeTabs" style="margin-bottom:0;">
+                        <button type="button" id="expModeBtnGeneral" class="sub-tab-btn active" onclick="switchExpenseEntryMode('general')">🧾 General School Expenses</button>
+                        <button type="button" id="expModeBtnFaculty" class="sub-tab-btn" onclick="switchExpenseEntryMode('faculty')">👨‍🏫 New Faculty-Linked Expense</button>
+                    </div>
+                </div>
                 <div class="form-row">
                     <div class="field">
                         <label>📅 Date</label>
                         <input type="date" id="expenseDate" />
                     </div>
                     <div class="field" style="flex:0 0 auto;">
-                        <button class="btn btn-primary" onclick="addExpenseRow()">＋ Add Row</button>
+                        <button type="button" class="btn btn-primary" onclick="addExpenseRow(window._activeExpenseEntryMode === 'faculty' ? { mainCategory: 'Faculty Expenses' } : {})">＋ Add Row</button>
                     </div>
                     <div class="field" style="flex:0 0 auto;">
-                        <button class="btn btn-success" onclick="submitExpenseBulk()">✅ Submit All</button>
+                        <button type="button" id="expenseSubmitAllBtn" class="btn btn-success" onclick="submitExpenseBulk()">✅ Submit All</button>
                     </div>
                 </div>
                 <div class="bulk-table-wrap">
                     <table class="bulk-table" id="expenseTable">
                         <thead>
                             <tr>
-                                <th style="min-width:100px;">Voucher No.</th>
-                                <th style="min-width:160px;">Particulars</th>
-                                <th style="min-width:100px;">Bank/Treasury (₹)</th>
-                                <th style="min-width:80px;">Cheque Count</th>
-                                <th style="min-width:120px;">Head</th>
+                                <th style="min-width:105px;">Voucher No.</th>
+                                <th style="min-width:140px;">Category / Sub</th>
+                                <th style="min-width:170px;">Particulars &amp; Remarks</th>
+                                <th style="min-width:190px;">Faculty Member</th>
+                                <th style="min-width:130px;">Mode &amp; Ref</th>
+                                <th style="min-width:100px;">Amount (₹)</th>
                                 <th style="min-width:100px;">Attachment</th>
-                                <th style="width:70px;">Action</th>
+                                <th style="width:60px;">Action</th>
                             </tr>
                         </thead>
                         <tbody id="expenseTableBody">
@@ -2464,6 +2586,10 @@
                     <div class="section-title" style="margin-bottom:0;">🏫 School Fee Management <small>– ERP
                             Administration Panel</small></div>
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <button class="btn btn-success" onclick="openCollectFeeModal()"
+                            title="Collect student fee payment" style="font-weight:600;">
+                            <span>💳</span> Collect Fee
+                        </button>
                         <button class="btn btn-outline" onclick="openStudentDirectory()"
                             title="View registered students">
                             <span>👥</span> Student Directory
@@ -2478,6 +2604,22 @@
                             <span>➕</span> Add Student
                         </button>
                     </div>
+                </div>
+
+                <!-- Quick Student Search Bar (Admission No primary) -->
+                <div style="position:relative; margin-bottom:16px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:14px; padding:12px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                    <span style="font-weight:700; font-size:13px; color:#0b2a4a; white-space:nowrap;">🔎 Quick Student Account:</span>
+                    <div style="position:relative; flex:1; min-width:260px;">
+                        <input type="text" id="feesQuickStudentSearch"
+                            placeholder="Search by Admission No (e.g. ADM-101), Student Name, Roll No, or Class..."
+                            oninput="handleFeesQuickStudentSearch(this.value)"
+                            onfocus="handleFeesQuickStudentSearch(this.value)"
+                            autocomplete="off"
+                            style="width:100%; padding:8px 14px; border:1px solid #cbd5e1; border-radius:10px; font-size:13px; background:#fff;" />
+                        <div id="feesQuickStudentResults"
+                            style="display:none; position:absolute; top:105%; left:0; right:0; background:#fff; border:1px solid #cbd5e1; border-radius:12px; box-shadow:0 12px 30px rgba(0,20,40,0.14); z-index:400; max-height:300px; overflow-y:auto;"></div>
+                    </div>
+                    <span style="font-size:12px; color:#64748b;">Open fee ledger or collect fee directly by Admission No</span>
                 </div>
 
                 <!-- Sub tabs navigation -->
@@ -2534,6 +2676,12 @@
                 <!-- ─── Sub-tab: Student Fee Status ─── -->
                 <div class="sub-tab-content" id="subtab-fees-status">
                     <div class="form-row" style="margin-bottom:18px; align-items:flex-end;">
+                        <div class="field" style="flex: 2 1 220px;">
+                            <label>🔍 Search Student</label>
+                            <input type="text" id="feesStatusSearch"
+                                placeholder="Admission No, Name, Roll No, Class, Section..."
+                                oninput="renderFeesStatus()" />
+                        </div>
                         <div class="field">
                             <label>🏫 Academic Year</label>
                             <select id="feesStatusAcademicYear" onchange="renderFeesStatus()"></select>
@@ -2558,30 +2706,21 @@
                             </select>
                         </div>
                         <div class="field">
-                            <label>Month</label>
-                            <select id="feesStatusMonth" onchange="renderFeesStatus()">
-                                <option value="">All Months</option>
-                                <option value="April">April</option>
-                                <option value="May">May</option>
-                                <option value="June">June</option>
-                                <option value="July">July</option>
-                                <option value="August">August</option>
-                                <option value="September">September</option>
-                                <option value="October">October</option>
-                                <option value="November">November</option>
-                                <option value="December">December</option>
-                                <option value="January">January</option>
-                                <option value="February">February</option>
-                                <option value="March">March</option>
+                            <label>Balance</label>
+                            <select id="feesStatusBalanceFilter" onchange="renderFeesStatus()">
+                                <option value="all">All Balances</option>
+                                <option value="outstanding">Has Outstanding (&gt; ₹0)</option>
+                                <option value="zero">Zero Balance (₹0)</option>
                             </select>
                         </div>
                         <div class="field">
                             <label>Status</label>
                             <select id="feesStatusFilter" onchange="renderFeesStatus()">
                                 <option value="all">All Statuses</option>
-                                <option value="Paid">Paid</option>
-                                <option value="Partial">Partial</option>
+                                <option value="Fully Paid">Fully Paid</option>
+                                <option value="Partially Paid">Partially Paid</option>
                                 <option value="Pending">Pending</option>
+                                <option value="Overdue">Overdue</option>
                             </select>
                         </div>
                         <div class="field" style="flex:0 0 auto;">
@@ -2652,13 +2791,17 @@
                 <!-- ─── Sub-tab: Reports ─── -->
                 <div class="sub-tab-content" id="subtab-fees-reports">
                     <div class="form-row" style="margin-bottom:18px; align-items:flex-end;">
-                        <div class="field">
+                        <div class="field" style="min-width:210px;">
                             <label>Report Type</label>
                             <select id="reportsSelectType" onchange="renderFeesReports()">
-                                <option value="defaulters">Defaulters List</option>
-                                <option value="class-aggregate">Class-wise Collection Summary</option>
-                                <option value="type-aggregate">Fee Type Collection Summary</option>
-                                <option value="monthly-aggregate">Monthly Collection Summary</option>
+                                <option value="defaulters">Outstanding Fees / Defaulters Report</option>
+                                <option value="student-history">Student Payment History Report</option>
+                                <option value="daily-collection">Daily Collection Report</option>
+                                <option value="monthly-aggregate">Monthly Collection Report</option>
+                                <option value="class-aggregate">Class-wise Collection Report</option>
+                                <option value="section-aggregate">Section-wise Collection Report</option>
+                                <option value="type-aggregate">Fee-type-wise Collection Report</option>
+                                <option value="partial-payments">Partial Payment Report</option>
                             </select>
                         </div>
                         <div class="field">
@@ -2683,11 +2826,21 @@
                                 <option value="">All Fee Categories</option>
                             </select>
                         </div>
+                        <div class="field" id="reportsDateFromField">
+                            <label>From Date</label>
+                            <input type="date" id="reportsDateFrom" onchange="renderFeesReports()" />
+                        </div>
+                        <div class="field" id="reportsDateToField">
+                            <label>To Date</label>
+                            <input type="date" id="reportsDateTo" onchange="renderFeesReports()" />
+                        </div>
                         <div style="display:flex; gap:8px;">
                             <button class="btn btn-outline" onclick="exportFeesReportCSV()">📥 Export CSV</button>
                             <button class="btn btn-primary" onclick="printFeesReport()">🖨️ Print Report</button>
                         </div>
                     </div>
+
+                    <div id="feesReportsStatusBanner" style="display:none; margin-bottom:12px;"></div>
 
                     <div class="bulk-table-wrap">
                         <table class="bulk-table" id="feesReportsTable">
@@ -2737,35 +2890,82 @@
             <div id="feeLedgerModal" class="modal-overlay"
                 onclick="if(event.target.id==='feeLedgerModal') hideFeeLedger()">
                 <div class="modal-content"
-                    style="max-width: 900px; width:95%; max-height:90vh; display:flex; flex-direction:column; padding:24px;">
+                    style="max-width: 980px; width:95%; max-height:92vh; display:flex; flex-direction:column; padding:24px;">
                     <button class="modal-close" onclick="hideFeeLedger()">✕</button>
-                    <div class="modal-header" style="flex-shrink:0;">
-                        <h3>🏫 Detailed Student Fee Ledger</h3>
+                    <div class="modal-header" style="flex-shrink:0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding-right:28px;">
+                        <h3 style="margin:0;">🏫 Detailed Student Fee Ledger</h3>
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Academic Year:</label>
+                            <select id="ledgerAcademicYearSelect" onchange="if(window._activeLedgerAdm) showFeeLedger(window._activeLedgerAdm, this.value)"
+                                style="padding:5px 10px; border:1px solid #d7dfe9; border-radius:8px; font-size:13px; background:#fff;"></select>
+                            <button class="btn btn-success btn-sm" id="ledgerCollectFeeBtn" onclick="openCollectFeeFromLedger()">💳 Collect Fee</button>
+                            <button class="btn btn-outline btn-sm" onclick="if(window._activeLedgerAdm) openStudentPaymentHistory(window._activeLedgerAdm)">📜 History</button>
+                            <button class="btn btn-outline btn-sm" onclick="exportStudentLedgerCSV()">📥 Export CSV</button>
+                            <button class="btn btn-primary btn-sm" onclick="printStudentLedger()">🖨️ Print Ledger</button>
+                        </div>
                     </div>
 
                     <div
-                        style="flex:1; overflow-y:auto; padding-right:4px; display:flex; flex-direction:column; gap:20px; text-align:left;">
-                        <!-- Student Profile -->
+                        style="flex:1; overflow-y:auto; padding-right:4px; display:flex; flex-direction:column; gap:18px; text-align:left; margin-top:12px;">
+                        <!-- Student Profile & KPIs -->
                         <div
-                            style="display:grid; grid-template-columns: 2fr 1fr; gap:16px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:16px; padding:16px;">
+                            style="display:grid; grid-template-columns: 2fr 1.4fr; gap:16px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:16px; padding:16px;">
                             <div style="line-height:1.6;">
-                                <h4 style="font-size:18px; font-weight:700; color:#0b2a4a;" id="ledgerStudentName">
-                                    Student Name</h4>
+                                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                    <h4 style="font-size:18px; font-weight:700; color:#0b2a4a; margin:0;" id="ledgerStudentName">
+                                        Student Name</h4>
+                                    <span id="ledgerStudentStatusBadge" class="badge-status paid" style="font-size:11px;">Active</span>
+                                </div>
                                 <div
                                     style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; margin-top:8px; font-size:13px; color:#3d5068;">
-                                    <div><strong>Admission No:</strong> <span id="ledgerAdmissionNo"></span></div>
+                                    <div><strong>Admission No:</strong> <span id="ledgerAdmissionNo" style="font-family:monospace; font-weight:700;"></span></div>
                                     <div><strong>Roll Number:</strong> <span id="ledgerRollNo"></span></div>
                                     <div><strong>Class &amp; Section:</strong> <span id="ledgerClassSec"></span></div>
                                     <div><strong>Father's Name:</strong> <span id="ledgerFatherName"></span></div>
                                     <div><strong>Phone:</strong> <span id="ledgerPhone"></span></div>
+                                    <div><strong>Academic Year:</strong> <span id="ledgerAcademicYearLabel"></span></div>
                                 </div>
                             </div>
-                            <div
-                                style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:12px; display:flex; flex-direction:column; justify-content:center; align-items:center;">
-                                <div style="font-size:11px; font-weight:600; color:#5e6f8a; text-transform:uppercase;">
-                                    Pending Fees</div>
-                                <div style="font-size:24px; font-weight:700; color:#b13e3e; margin-top:4px;"
-                                    id="ledgerOutstandingAmount">₹0.00</div>
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                                <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:10px;">
+                                    <div style="font-size:10px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Assigned Fees</div>
+                                    <div style="font-size:16px; font-weight:700; color:#0b2a4a; margin-top:2px;" id="ledgerTotalAssigned">₹0.00</div>
+                                </div>
+                                <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:10px;">
+                                    <div style="font-size:10px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Discounts / Conc.</div>
+                                    <div style="font-size:16px; font-weight:700; color:#0284c7; margin-top:2px;" id="ledgerTotalDiscount">₹0.00</div>
+                                </div>
+                                <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:10px;">
+                                    <div style="font-size:10px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Total Paid</div>
+                                    <div style="font-size:16px; font-weight:700; color:#0f7b3a; margin-top:2px;" id="ledgerTotalPaid">₹0.00</div>
+                                </div>
+                                <div style="background:#fff; border:1px solid #f8dddd; border-radius:10px; padding:10px;">
+                                    <div style="font-size:10px; font-weight:700; color:#b13e3e; text-transform:uppercase;">Remaining Balance</div>
+                                    <div style="font-size:16px; font-weight:700; color:#b13e3e; margin-top:2px;" id="ledgerOutstandingAmount">₹0.00</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Fee-Head-Wise Breakdown -->
+                        <div>
+                            <h4 style="font-weight:700; font-size:14px; margin-bottom:8px; color:#0b2a4a;">📁 Fee-Head-Wise Breakdown</h4>
+                            <div class="bulk-table-wrap" style="margin:0; max-height:200px; overflow:auto;">
+                                <table class="bulk-table" style="width:100%;">
+                                    <thead>
+                                        <tr>
+                                            <th>Fee Head</th>
+                                            <th>Frequency</th>
+                                            <th style="text-align:right;">Assigned (₹)</th>
+                                            <th style="text-align:right;">Discount (₹)</th>
+                                            <th style="text-align:right;">Net Payable (₹)</th>
+                                            <th style="text-align:right;">Paid (₹)</th>
+                                            <th style="text-align:right;">Balance (₹)</th>
+                                            <th>Status</th>
+                                            <th>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="ledgerHeadBreakdownBody"></tbody>
+                                </table>
                             </div>
                         </div>
 
@@ -2773,7 +2973,7 @@
                         <div>
                             <h4 style="font-weight:700; font-size:14px; margin-bottom:8px; color:#0b2a4a;">🗓️ Monthly
                                 Fee Matrix (Academic Year)</h4>
-                            <div class="bulk-table-wrap" style="margin:0; max-height:220px; overflow:auto;">
+                            <div class="bulk-table-wrap" style="margin:0; max-height:200px; overflow:auto;">
                                 <table class="bulk-table matrix-table" id="ledgerMatrixTable">
                                     <thead>
                                         <!-- Dynamic headers -->
@@ -2795,9 +2995,10 @@
                                         <tr>
                                             <th>Receipt No.</th>
                                             <th>Date</th>
-                                            <th>Fee Type</th>
-                                            <th>Particulars</th>
-                                            <th>Amount (₹)</th>
+                                            <th>Fee Head</th>
+                                            <th>Mode &amp; Ref</th>
+                                            <th>Remarks / Particulars</th>
+                                            <th style="text-align:right;">Amount (₹)</th>
                                             <th>Action</th>
                                         </tr>
                                     </thead>
@@ -2986,13 +3187,32 @@
                 <div class="sub-tab-content" id="subtab-faculty-reports" style="display: none;">
                     <!-- Filter & Control Toolbar for Reports -->
                     <div class="faculty-filter-bar" style="margin-bottom: 20px;">
-                        <div class="faculty-filter-group" style="min-width: 240px;">
+                        <div class="faculty-filter-group" style="min-width: 250px;">
                             <label>📊 Report Type</label>
                             <select id="facultyReportTypeSelect" class="faculty-filter-control"
                                 onchange="renderFacultyReports()">
-                                <option value="salary-register">📋 Salary Register (Staff Breakdown)</option>
-                                <option value="monthly-summary">📅 Monthly Disbursement Summary</option>
-                                <option value="dept-summary">🏛️ Department-wise Payroll Breakdown</option>
+                                <option value="salary-register">📋 Salary Register (Salary Only)</option>
+                                <option value="monthly-summary">📅 Monthly Salary Report (Salary Only)</option>
+                                <option value="dept-summary">🏛️ Department-wise Faculty Expenses</option>
+                                <option value="faculty-total">👨‍🏫 Faculty-wise Total Expenses</option>
+                                <option value="category-summary">📊 Subcategory-wise Faculty Expense Summary</option>
+                                <option value="advance-report">⏩ Advance Salary Report</option>
+                                <option value="bonus-incentive-report">🎁 Bonus &amp; Incentives Report</option>
+                                <option value="travel-report">✈️ Travel Expense Report</option>
+                                <option value="reimbursement-report">🧾 Reimbursements Report</option>
+                                <option value="gifts-report">🎀 Gifts / Goodies Report</option>
+                                <option value="training-report">🎓 Training / Workshop Expenses Report</option>
+                                <option value="other-faculty-report">📦 Other Faculty Expenses Report</option>
+                                <option value="salary-vs-nonsalary">⚖️ Salary vs Non-Salary Breakdown</option>
+                                <option value="individual-history">📜 Individual Faculty Payment History</option>
+                            </select>
+                        </div>
+
+                        <div class="faculty-filter-group" id="facultyReportPersonGroup" style="min-width: 210px; display:none;">
+                            <label>👨‍🏫 Faculty Member</label>
+                            <select id="facultyReportPersonSelect" class="faculty-filter-control"
+                                onchange="renderFacultyReports()">
+                                <option value="">Select Faculty Member...</option>
                             </select>
                         </div>
 
@@ -3148,9 +3368,23 @@
                     <div style="display:flex; flex-direction:column; gap:4px;">
                         <label style="font-size:11px; font-weight:600; color:#5e6f8a; text-transform:uppercase;">🔍
                             Search</label>
-                        <input type="text" id="txFilterSearch" placeholder="Particulars, @student, @faculty, #tag"
+                        <input type="text" id="txFilterSearch" placeholder="Particulars, Ref, Receipt, #tag"
                             onkeydown="if(event.key === 'Enter') renderTransactions()"
                             style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;min-width:180px;font-size:13px;" />
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        <label style="font-size:11px; font-weight:600; color:#5e6f8a; text-transform:uppercase;">🎓
+                            Student / Adm No</label>
+                        <input type="text" id="txFilterStudent" placeholder="Name or Admission No"
+                            oninput="renderTransactions()"
+                            style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;min-width:150px;font-size:13px;" />
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        <label style="font-size:11px; font-weight:600; color:#5e6f8a; text-transform:uppercase;">👨‍🏫
+                            Faculty / Emp ID</label>
+                        <input type="text" id="txFilterFaculty" placeholder="Name or Employee ID"
+                            oninput="renderTransactions()"
+                            style="padding:6px 12px;border:1px solid #d7dfe9;border-radius:10px;min-width:150px;font-size:13px;" />
                     </div>
                     <div style="display:flex; flex-direction:column; gap:4px;">
                         <label
@@ -3307,6 +3541,17 @@
                             </h4>
                             <div id="settingsTagsList"
                                 style="max-height:300px; overflow-y:auto; display:flex; gap:6px; flex-wrap:wrap; padding-top:4px;">
+                                <!-- Populated by JS -->
+                            </div>
+                        </div>
+                        <div style="background:#fff; border:1px solid #d7dfe9; padding:16px; border-radius:12px;">
+                            <h4
+                                style="font-size:14px; margin-bottom:10px; color:#0b2a4a; display:flex; justify-content:space-between; align-items:center;">
+                                <span>👨‍🏫 Faculty Expense Categories</span>
+                                <button class="btn btn-primary btn-xs" onclick="showAddFacultyCategoryPrompt()">+ Add Sub</button>
+                            </h4>
+                            <div id="settingsFacultyCategoriesList"
+                                style="max-height:300px; overflow-y:auto; font-size:13px; display:flex; flex-direction:column; gap:6px;">
                                 <!-- Populated by JS -->
                             </div>
                         </div>
@@ -3801,6 +4046,14 @@
                         <input type="tel" id="newStudentPhone" placeholder="Contact number"
                             style="padding:8px 12px; border:1px solid #d7dfe9; border-radius:10px; width:100%; box-sizing:border-box;" />
                     </div>
+                    <div class="field" style="flex: 0.7;">
+                        <label style="font-weight:600; font-size:12px; color:#5e6f8a;">Status</label>
+                        <select id="newStudentStatus"
+                            style="padding:8px 12px; border:1px solid #d7dfe9; border-radius:10px; width:100%; box-sizing:border-box; background:#fff;">
+                            <option value="active" selected>Active</option>
+                            <option value="inactive">Inactive</option>
+                        </select>
+                    </div>
                 </div>
                 <div
                     style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; border-top: 1px solid #eef2f8; padding-top: 16px;">
@@ -3926,33 +4179,39 @@
 
                 <div class="form-row">
                     <div class="form-group half">
+                        <label>Voucher Number <span class="required">*</span></label>
+                        <input type="text" id="paySalaryVoucher" required placeholder="e.g. VCH-1024" style="font-family:monospace;">
+                    </div>
+                    <div class="form-group half">
+                        <label>Salary Month / Period</label>
+                        <input type="text" id="paySalaryMonth" placeholder="e.g. November 2026">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
                         <label>Disbursement Date <span class="required">*</span></label>
                         <input type="date" id="paySalaryDate" required>
                     </div>
                     <div class="form-group half">
                         <label>Payment Amount (₹) <span class="required">*</span></label>
-                        <input type="number" id="paySalaryAmount" required step="0.01"
+                        <input type="number" id="paySalaryAmount" required min="0.01" step="0.01"
                             style="font-weight: 700; color: #0b2a4a; font-size: 15px;">
                     </div>
                 </div>
                 <div class="form-group">
                     <label>Expense Category <span class="required">*</span></label>
                     <select id="paySalaryCategory" required>
-                        <option value="Salary - Basic">Salary</option>
-                        <option value="Salary - Bonus">Bonus</option>
-                        <option value="Advance">Advance Salary</option>
-                        <option value="Incentives">Incentives</option>
-                        <option value="Reimbursement">Reimbursement</option>
-                        <option value="Other">Other Faculty Expenses</option>
+                        <option value="Salary">Salary</option>
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Payment Method <span class="required">*</span></label>
+                    <label>Payment Mode <span class="required">*</span></label>
                     <select id="paySalaryMethod" required onchange="togglePaySalaryBankOpts()">
-                        <option value="Cash">💵 Cash</option>
-                        <option value="Bank">🏦 Bank Transfer (NEFT/RTGS/IMPS)</option>
-                        <option value="Cheque">📜 Cheque</option>
-                        <option value="UPI">📱 UPI / QR</option>
+                        <option value="cash">💵 Cash</option>
+                        <option value="bank_transfer">🏦 Bank Transfer (NEFT/RTGS/IMPS)</option>
+                        <option value="cheque">📜 Cheque</option>
+                        <option value="upi">📱 UPI / QR</option>
+                        <option value="other">🔹 Other</option>
                     </select>
                 </div>
                 <div class="form-group" id="paySalaryBankGrp" style="display:none;">
@@ -3972,35 +4231,246 @@
         </div>
     </div>
 
-    <!-- Faculty Salary History Modal -->
+    <!-- Faculty Financial History & Summary Modal -->
     <div id="facultyHistoryModal" class="modal-overlay" style="display:none; z-index: 1200;"
         onclick="if(event.target.id==='facultyHistoryModal') hideFacultyHistoryModal()">
         <div class="modal-content"
-            style="max-width: 760px; width: 95%; border-radius: 18px; box-shadow: 0 20px 50px rgba(0,20,40,0.18);">
+            style="max-width: 960px; width: 95%; max-height: 92vh; display:flex; flex-direction:column; border-radius: 18px; box-shadow: 0 20px 50px rgba(0,20,40,0.18); padding:24px;">
             <button class="modal-close" onclick="hideFacultyHistoryModal()">✕</button>
-            <div class="modal-header" style="border-bottom: 1px solid #eef2f8; padding-bottom: 12px;">
-                <h3 id="facultyHistoryTitle" style="color: #0b2a4a; font-size: 18px; font-weight: 700;">📜 Salary
-                    History</h3>
+            <div class="modal-header" style="border-bottom: 1px solid #eef2f8; padding-bottom: 12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding-right:28px;">
+                <h3 id="facultyHistoryTitle" style="color: #0b2a4a; font-size: 18px; font-weight: 700; margin:0;">📜 Faculty Financial History</h3>
+                <div style="display:flex; gap:8px;">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="exportFacultyHistoryCSV()">📥 Export CSV</button>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="printFacultyHistory()">🖨️ Print Summary</button>
+                </div>
             </div>
 
-            <div id="facultyHistorySummary"></div>
+            <div id="facultyHistorySummary" style="margin-top:10px;"></div>
 
-            <div class="bulk-table-wrap"
-                style="max-height: 420px; overflow-y:auto; border-radius: 12px; border: 1px solid #e6ecf3; margin-top: 10px;">
+            <!-- Tabs -->
+            <div class="sub-tabs" id="facultyHistoryTabs" style="margin-bottom:12px;">
+                <button type="button" class="sub-tab-btn active" data-fhist-tab="all" onclick="switchFacultyHistoryTab('all')">📋 All Records</button>
+                <button type="button" class="sub-tab-btn" data-fhist-tab="salary" onclick="switchFacultyHistoryTab('salary')">💼 Salary History</button>
+                <button type="button" class="sub-tab-btn" data-fhist-tab="other" onclick="switchFacultyHistoryTab('other')">✈️ Other Expenses</button>
+                <button type="button" class="sub-tab-btn" data-fhist-tab="advances" onclick="switchFacultyHistoryTab('advances')">⏩ Advances</button>
+                <button type="button" class="sub-tab-btn" data-fhist-tab="summary" onclick="switchFacultyHistoryTab('summary')">📊 Financial Summary</button>
+                <button type="button" class="sub-tab-btn" data-fhist-tab="profile" onclick="switchFacultyHistoryTab('profile')">👤 Profile</button>
+            </div>
+
+            <!-- Filters bar -->
+            <div id="facultyHistoryFiltersBar" style="display:flex; gap:10px; flex-wrap:wrap; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; margin-bottom:12px; align-items:flex-end;">
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                    <label style="font-size:10px; font-weight:700; color:#64748b; text-transform:uppercase;">From Date</label>
+                    <input type="date" id="fHistDateFrom" onchange="renderFacultyHistoryView()" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px;">
+                </div>
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                    <label style="font-size:10px; font-weight:700; color:#64748b; text-transform:uppercase;">To Date</label>
+                    <input type="date" id="fHistDateTo" onchange="renderFacultyHistoryView()" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px;">
+                </div>
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                    <label style="font-size:10px; font-weight:700; color:#64748b; text-transform:uppercase;">Category</label>
+                    <select id="fHistCategoryFilter" onchange="renderFacultyHistoryView()" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px; background:#fff;">
+                        <option value="all">All Categories</option>
+                    </select>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                    <label style="font-size:10px; font-weight:700; color:#64748b; text-transform:uppercase;">Mode</label>
+                    <select id="fHistModeFilter" onchange="renderFacultyHistoryView()" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px; background:#fff;">
+                        <option value="all">All Modes</option>
+                        <option value="cash">Cash</option>
+                        <option value="bank_transfer">Bank Transfer</option>
+                        <option value="cheque">Cheque</option>
+                        <option value="upi">UPI</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <button type="button" class="btn btn-outline btn-xs" onclick="resetFacultyHistoryFilters()">Reset</button>
+            </div>
+
+            <!-- Panel: Records Table -->
+            <div id="facultyHistoryTablePanel" class="bulk-table-wrap"
+                style="flex:1; max-height: 380px; overflow-y:auto; border-radius: 12px; border: 1px solid #e6ecf3; margin-top: 0;">
                 <table class="bulk-table" style="width: 100%;">
                     <thead>
                         <tr style="background: #f8fafc;">
-                            <th style="padding: 10px 14px;">Date</th>
-                            <th style="padding: 10px 14px;">Category</th>
-                            <th style="padding: 10px 14px;">Payment Mode</th>
-                            <th style="text-align: right; padding: 10px 14px;">Amount (₹)</th>
-                            <th style="padding: 10px 14px;">Particulars / Ref</th>
+                            <th style="padding: 10px 12px;">Date</th>
+                            <th style="padding: 10px 12px;">Voucher</th>
+                            <th style="padding: 10px 12px;">Category</th>
+                            <th style="padding: 10px 12px;">Particulars / Ref</th>
+                            <th style="text-align: right; padding: 10px 12px;">Amount (₹)</th>
+                            <th style="padding: 10px 12px;">Mode</th>
+                            <th style="padding: 10px 12px; text-align:center;">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="facultyHistoryBody">
                     </tbody>
                 </table>
             </div>
+
+            <!-- Panel: Financial Summary & Profile -->
+            <div id="facultyHistoryDetailPanel" style="display:none; flex:1; overflow-y:auto; padding:6px 2px;"></div>
+        </div>
+    </div>
+
+    <!-- Collect Student Fee Modal -->
+    <div id="collectFeeModal" class="modal-overlay" style="display:none; z-index: 1220;"
+        onclick="if(event.target.id==='collectFeeModal') hideCollectFeeModal()">
+        <div class="modal-content" style="max-width: 820px; width:95%; max-height:92vh; display:flex; flex-direction:column; padding:24px; border-radius:18px;">
+            <button class="modal-close" onclick="hideCollectFeeModal()">✕</button>
+            <div class="modal-header" style="border-bottom:1px solid #eef2f8; padding-bottom:12px;">
+                <h3 style="margin:0; color:#0b2a4a;">💳 Collect Student Fee</h3>
+            </div>
+            <div style="flex:1; overflow-y:auto; padding-right:4px; margin-top:14px; display:flex; flex-direction:column; gap:14px; text-align:left;">
+                <!-- Step 1: Student Selection -->
+                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:12px 14px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+                        <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Step 1 — Student (Search by Admission No, Name, Roll No)</label>
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Academic Year:</label>
+                            <select id="collectFeeAcademicYear" onchange="refreshCollectFeeHeads()" style="padding:4px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px; background:#fff;"></select>
+                        </div>
+                    </div>
+                    <div style="position:relative;">
+                        <input type="text" id="collectFeeStudentSearch" placeholder="Type Admission No or Student Name to select..."
+                            oninput="searchCollectFeeStudents(this.value)" onfocus="searchCollectFeeStudents(this.value)" autocomplete="off"
+                            style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:10px; font-size:13px; background:#fff;" />
+                        <div id="collectFeeStudentDropdown" style="display:none; position:absolute; top:105%; left:0; right:0; background:#fff; border:1px solid #cbd5e1; border-radius:10px; box-shadow:0 10px 25px rgba(0,0,0,0.12); z-index:50; max-height:200px; overflow-y:auto;"></div>
+                    </div>
+                    <input type="hidden" id="collectFeeStudentUuid" />
+                    <input type="hidden" id="collectFeeStudentAdm" />
+                    <div id="collectFeeSelectedStudentBanner" style="margin-top:10px; display:none; background:#fff; border:1px solid #bae6fd; border-radius:10px; padding:10px 12px;"></div>
+                </div>
+
+                <!-- Step 2: Assigned Fee Heads -->
+                <div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Step 2 — Fee Heads &amp; Allocation</label>
+                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:#0b2a4a; cursor:pointer;">
+                            <input type="checkbox" id="collectFeeMultiMode" onchange="toggleCollectFeeMultiMode()" />
+                            Allocate across multiple fee heads
+                        </label>
+                    </div>
+                    <div class="bulk-table-wrap" style="margin:0; max-height:190px; overflow:auto;">
+                        <table class="bulk-table" style="width:100%; font-size:12px;">
+                            <thead>
+                                <tr>
+                                    <th style="width:36px;">Select</th>
+                                    <th>Fee Head</th>
+                                    <th style="text-align:right;">Assigned</th>
+                                    <th style="text-align:right;">Discount</th>
+                                    <th style="text-align:right;">Paid</th>
+                                    <th style="text-align:right;">Balance</th>
+                                    <th id="collectFeeAllocHeader" style="display:none; text-align:right; width:120px;">Pay Now (₹)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="collectFeeHeadsBody">
+                                <tr><td colspan="7" class="text-center text-muted" style="padding:16px;">Select a student to view assigned fee heads.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Step 3: Payment Details -->
+                <div style="background:#f9fbfe; border:1px solid #e6ecf3; border-radius:12px; padding:14px;">
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:12px;">
+                        <div class="field">
+                            <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Payment Date *</label>
+                            <input type="date" id="collectFeeDate" required style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%;" />
+                        </div>
+                        <div class="field">
+                            <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Receipt Number *</label>
+                            <input type="text" id="collectFeeReceiptNo" required placeholder="e.g. REC-1001" style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%; font-family:monospace;" />
+                        </div>
+                        <div class="field" id="collectFeeAmountGroup">
+                            <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Payment Amount (₹) *</label>
+                            <input type="number" id="collectFeeAmount" min="0.01" step="0.01" oninput="updateCollectFeeBalancePreview()" placeholder="0.00" style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%; font-weight:700; color:#0b2a4a;" />
+                        </div>
+                        <div class="field">
+                            <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Fee Month / Installment</label>
+                            <select id="collectFeeMonth" style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%; background:#fff;">
+                                <option value="">Annual / Full</option>
+                                <option value="April">April</option><option value="May">May</option><option value="June">June</option>
+                                <option value="July">July</option><option value="August">August</option><option value="September">September</option>
+                                <option value="October">October</option><option value="November">November</option><option value="December">December</option>
+                                <option value="January">January</option><option value="February">February</option><option value="March">March</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Payment Mode *</label>
+                            <select id="collectFeeMode" onchange="toggleCollectFeeRefField()" style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%; background:#fff;">
+                                <option value="cash">💵 Cash</option>
+                                <option value="bank_transfer">🏦 Bank Transfer</option>
+                                <option value="cheque">📜 Cheque</option>
+                                <option value="upi">📱 UPI / Online</option>
+                                <option value="other">🔹 Other</option>
+                            </select>
+                        </div>
+                        <div class="field" id="collectFeeRefGroup" style="display:none;">
+                            <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Transaction / Cheque / UPI Ref</label>
+                            <input type="text" id="collectFeeRefNo" placeholder="UTR / Cheque / UPI ID" style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%;" />
+                        </div>
+                    </div>
+                    <div class="field" style="margin-top:10px;">
+                        <label style="font-size:11px; font-weight:700; color:#5e6f8a; text-transform:uppercase;">Remarks</label>
+                        <input type="text" id="collectFeeRemarks" placeholder="Optional notes or installment reference" style="padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; width:100%;" />
+                    </div>
+                    <div id="collectFeeValidationPreview" style="margin-top:10px; font-size:12px; color:#475569; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;"></div>
+                </div>
+            </div>
+            <div style="margin-top:14px; border-top:1px solid #eef2f8; padding-top:12px; display:flex; justify-content:flex-end; gap:10px;">
+                <button type="button" class="btn btn-outline" onclick="hideCollectFeeModal()">Cancel</button>
+                <button type="button" id="collectFeeSubmitBtn" class="btn btn-success" onclick="submitCollectFee()" style="padding:9px 22px; font-weight:600;">✅ Record Fee &amp; Print Receipt</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Student Payment History Modal -->
+    <div id="studentPaymentHistoryModal" class="modal-overlay" style="display:none; z-index: 1215;"
+        onclick="if(event.target.id==='studentPaymentHistoryModal') hideStudentPaymentHistory()">
+        <div class="modal-content" style="max-width: 960px; width:95%; max-height:92vh; display:flex; flex-direction:column; padding:24px; border-radius:18px;">
+            <button class="modal-close" onclick="hideStudentPaymentHistory()">✕</button>
+            <div class="modal-header" style="border-bottom:1px solid #eef2f8; padding-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding-right:28px;">
+                <h3 id="studentPayHistTitle" style="margin:0; color:#0b2a4a;">📜 Student Payment History</h3>
+                <div style="display:flex; gap:8px;">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="exportStudentPaymentHistoryCSV()">📥 Export CSV</button>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="printStudentPaymentHistory()">🖨️ Print History</button>
+                </div>
+            </div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; margin:12px 0; align-items:flex-end;">
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                    <label style="font-size:10px; font-weight:700; color:#64748b; text-transform:uppercase;">Academic Year</label>
+                    <select id="sphFilterYear" onchange="renderStudentPaymentHistoryTable()" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px; background:#fff;"><option value="all">All Years</option></select>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                    <label style="font-size:10px; font-weight:700; color:#64748b; text-transform:uppercase;">Fee Head</label>
+                    <select id="sphFilterHead" onchange="renderStudentPaymentHistoryTable()" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px; background:#fff;"><option value="all">All Fee Heads</option></select>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                    <label style="font-size:10px; font-weight:700; color:#64748b; text-transform:uppercase;">Mode</label>
+                    <select id="sphFilterMode" onchange="renderStudentPaymentHistoryTable()" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px; background:#fff;">
+                        <option value="all">All Modes</option><option value="cash">Cash</option><option value="bank_transfer">Bank Transfer</option><option value="cheque">Cheque</option><option value="upi">UPI</option><option value="other">Other</option>
+                    </select>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                    <label style="font-size:10px; font-weight:700; color:#64748b; text-transform:uppercase;">From</label>
+                    <input type="date" id="sphFilterFrom" onchange="renderStudentPaymentHistoryTable()" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px;" />
+                </div>
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                    <label style="font-size:10px; font-weight:700; color:#64748b; text-transform:uppercase;">To</label>
+                    <input type="date" id="sphFilterTo" onchange="renderStudentPaymentHistoryTable()" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px;" />
+                </div>
+            </div>
+            <div class="bulk-table-wrap" style="flex:1; max-height:380px; overflow:auto; margin:0;">
+                <table class="bulk-table" style="width:100%; font-size:12px;">
+                    <thead>
+                        <tr>
+                            <th>Date</th><th>Receipt No</th><th>AY</th><th>Fee Head</th><th style="text-align:right;">Amount (₹)</th><th>Mode</th><th>Ref No</th><th>Recorded By</th><th>Remarks</th><th>Status</th><th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sphTableBody"></tbody>
+                </table>
+            </div>
+            <div id="sphSummary" class="text-muted text-sm mt-12"></div>
         </div>
     </div>
 
