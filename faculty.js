@@ -458,18 +458,36 @@
         }
     };
 
-    // --- Pay Salary ---
+    // --- Pay Salary / Faculty Expense ---
+
+    function generateFacultyVoucherNo() {
+        let maxSeq = 1000;
+        const payments = Array.isArray(currentReportPayments) ? currentReportPayments : [];
+        payments.forEach(p => {
+            const m = String(p.voucher_number || '').match(/VCH-(\d+)/i);
+            if (m) {
+                const n = parseInt(m[1], 10);
+                if (!isNaN(n) && n >= maxSeq) maxSeq = n + 1;
+            }
+        });
+        return `VCH-${maxSeq}`;
+    }
 
     window.openPaySalaryModal = async function(id) {
         const faculty = currentFacultyList.find(f => f.id === id);
         if (!faculty) return;
 
+        if (faculty.status === 'inactive') {
+            if (window.showToast) {
+                window.showToast(`⚠️ ${faculty.name} is marked Inactive. Re-activate before issuing payments.`, 'warning');
+            }
+        }
+
         const form = document.getElementById('paySalaryForm');
         if (form) form.reset();
-        
+
         document.getElementById('paySalaryFacultyId').value = faculty.id;
-        
-        // Populate preview banner
+
         const bannerEl = document.getElementById('paySalaryRecipientBanner');
         if (bannerEl) {
             const initials = getInitials(faculty.name);
@@ -480,8 +498,8 @@
                         ${initials}
                     </div>
                     <div>
-                        <div style="font-weight: 700; font-size: 15px; color: #0b2a4a;">${faculty.name}</div>
-                        <div style="font-size: 12px; color: #5e6f8a;">ID: ${faculty.employee_id} • ${faculty.designation} (${faculty.department})</div>
+                        <div style="font-weight: 700; font-size: 15px; color: #0b2a4a;">${escapeHtml(faculty.name)} ${faculty.status === 'inactive' ? '<span style="color:#b91c1c; font-size:11px;">(Inactive)</span>' : ''}</div>
+                        <div style="font-size: 12px; color: #5e6f8a;">ID: ${escapeHtml(faculty.employee_id)} • ${escapeHtml(faculty.designation)} (${escapeHtml(faculty.department)})</div>
                     </div>
                 </div>
                 <div style="text-align: right;">
@@ -495,23 +513,27 @@
         if (nameInput) {
             nameInput.value = `${faculty.name} (${faculty.employee_id || ''})`;
         }
-        
-        // Default to today
-        document.getElementById('paySalaryDate').value = new Date().toISOString().split('T')[0];
-        
-        // Default to base salary if set
+
+        const today = new Date().toISOString().split('T')[0];
+        const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+        const dateEl = document.getElementById('paySalaryDate');
+        if (dateEl) dateEl.value = today;
+
+        const voucherEl = document.getElementById('paySalaryVoucher');
+        if (voucherEl) voucherEl.value = generateFacultyVoucherNo();
+
+        const monthEl = document.getElementById('paySalaryMonth');
+        if (monthEl) monthEl.value = currentMonth;
+
         if (faculty.base_salary) {
             document.getElementById('paySalaryAmount').value = faculty.base_salary;
         }
 
-        // Set default remarks
-        const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
         const remarksInput = document.getElementById('paySalaryRemarks');
         if (remarksInput) {
             remarksInput.value = `Salary disbursement for ${currentMonth}`;
         }
 
-        // Populate categories dynamically
         try {
             const categories = await window.DataService.getFacultyExpenseCategories();
             const catSelect = document.getElementById('paySalaryCategory');
@@ -539,14 +561,17 @@
     };
 
     window.togglePaySalaryBankOpts = function() {
-        const method = document.getElementById('paySalaryMethod').value;
+        const methodEl = document.getElementById('paySalaryMethod');
+        const method = methodEl ? methodEl.value.toLowerCase() : 'cash';
         const bankGrp = document.getElementById('paySalaryBankGrp');
         if (!bankGrp) return;
-        if (method === 'Bank' || method === 'Cheque' || method === 'UPI') {
+        if (method === 'bank_transfer' || method === 'bank' || method === 'cheque' || method === 'upi' || method === 'other') {
             bankGrp.style.display = 'block';
             const label = bankGrp.querySelector('label');
             if (label) {
-                label.textContent = method === 'UPI' ? 'UPI Transaction ID / Ref' : (method === 'Cheque' ? 'Cheque Number' : 'Bank Reference / UTR');
+                label.textContent = method === 'upi'
+                    ? 'UPI Transaction ID / Ref'
+                    : (method === 'cheque' ? 'Cheque Number' : (method === 'other' ? 'Reference / Note' : 'Bank Reference / UTR'));
             }
         } else {
             bankGrp.style.display = 'none';
@@ -561,55 +586,74 @@
             ? event.target.querySelector('button[type="submit"]')
             : (form ? form.querySelector('button[type="submit"]') : null);
         const oldText = submitBtn ? submitBtn.innerHTML : 'Submit Payment';
+
+        const facultyId = document.getElementById('paySalaryFacultyId').value;
+        const faculty = currentFacultyList.find(f => f.id === facultyId);
+        if (!faculty) {
+            if (window.showToast) window.showToast('Selected faculty member not found.', 'error');
+            return;
+        }
+        if (faculty.status === 'inactive') {
+            if (window.showToast) window.showToast('Cannot record payment for an inactive faculty member.', 'error');
+            return;
+        }
+
+        const catSelect = document.getElementById('paySalaryCategory');
+        const selectedCatText = catSelect && catSelect.selectedOptions && catSelect.selectedOptions[0]
+            ? catSelect.selectedOptions[0].textContent : 'Salary';
+        const voucherVal = document.getElementById('paySalaryVoucher') ? document.getElementById('paySalaryVoucher').value.trim() : '';
+        const salaryMonthVal = document.getElementById('paySalaryMonth') ? document.getElementById('paySalaryMonth').value.trim() : '';
+        const methodVal = document.getElementById('paySalaryMethod').value || 'cash';
+        const refVal = document.getElementById('paySalaryRef') ? document.getElementById('paySalaryRef').value.trim() : '';
+        const remarksVal = document.getElementById('paySalaryRemarks') ? document.getElementById('paySalaryRemarks').value.trim() : '';
+        const amountVal = parseFloat(document.getElementById('paySalaryAmount').value);
+
+        if (!voucherVal) {
+            if (window.showToast) window.showToast('Voucher number is required.', 'error');
+            return;
+        }
+        if (isNaN(amountVal) || amountVal <= 0) {
+            if (window.showToast) window.showToast('Please enter a valid payment amount greater than zero.', 'error');
+            return;
+        }
+        if ((methodVal === 'bank_transfer' || methodVal === 'cheque' || methodVal === 'upi') && !refVal) {
+            if (window.showToast) window.showToast('Transaction / Cheque / UPI reference number is required for non-cash mode.', 'error');
+            return;
+        }
+
         if (submitBtn) {
             submitBtn.disabled = true;
             submitBtn.innerHTML = '<span class="spinner" style="display:inline-block; width:12px; height:12px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; margin-right:6px;"></span> Processing...';
         }
 
-        const catSelect = document.getElementById('paySalaryCategory');
-        const selectedCatText = catSelect && catSelect.selectedOptions && catSelect.selectedOptions[0] ? catSelect.selectedOptions[0].textContent : 'Salary';
-
-        const facultyId = document.getElementById('paySalaryFacultyId').value;
-        const faculty = currentFacultyList.find(f => f.id === facultyId);
-
         const payload = {
             faculty_id: facultyId,
-            faculty_name: faculty ? (faculty.name || faculty.faculty_name) : '',
-            employee_id: faculty ? faculty.employee_id : '',
-            department: faculty ? faculty.department : '',
-            designation: faculty ? faculty.designation : '',
+            faculty_name: faculty.name || faculty.faculty_name || '',
+            employee_id: faculty.employee_id || '',
+            department: faculty.department || '',
+            designation: faculty.designation || '',
             payment_date: document.getElementById('paySalaryDate').value,
-            amount: parseFloat(document.getElementById('paySalaryAmount').value),
-            expense_category_id: catSelect ? catSelect.value : null,
+            amount: amountVal,
+            expense_category_id: catSelect && catSelect.value ? parseInt(catSelect.value, 10) : null,
             expense_category_name: selectedCatText,
-            payment_method: document.getElementById('paySalaryMethod').value,
-            reference: document.getElementById('paySalaryRef') ? document.getElementById('paySalaryRef').value.trim() : null,
-            remarks: document.getElementById('paySalaryRemarks') ? document.getElementById('paySalaryRemarks').value.trim() : null
+            payment_method: methodVal,
+            payment_mode: methodVal,
+            voucher_number: voucherVal,
+            salary_month: salaryMonthVal || null,
+            reference: refVal || null,
+            reference_number: refVal || null,
+            remarks: remarksVal || `${selectedCatText} — ${faculty.name} (${faculty.employee_id})`,
+            particulars: `${selectedCatText} - ${faculty.name} (${faculty.employee_id})`
         };
-
-        if (isNaN(payload.amount) || payload.amount <= 0) {
-            if (window.showToast) {
-                window.showToast('Please enter a valid payment amount greater than zero.', 'error');
-            }
-            if (submitBtn) {
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = oldText;
-            }
-            return;
-        }
 
         try {
             await window.DataService.payFacultySalary(payload);
             if (window.showToast) {
-                window.showToast("Salary disbursement recorded successfully!", "success");
+                window.showToast(`✅ ${selectedCatText} disbursement (${voucherVal}) recorded for ${faculty.name}!`, "success");
             }
             hidePaySalaryModal();
-            // Refresh global transactions in app.js
-            if (typeof window.stitchFacultyToTransactions === 'function') {
-                window.stitchFacultyToTransactions();
-            }
             if (typeof window.syncAllFromSupabase === 'function') {
-                window.syncAllFromSupabase();
+                await window.syncAllFromSupabase();
             } else if (typeof window.loadDataFromSupabase === 'function') {
                 await window.loadDataFromSupabase();
             }
@@ -622,6 +666,9 @@
             if (typeof window.renderExpenseList === 'function') {
                 window.renderExpenseList();
             }
+            if (typeof window.refreshDashboard === 'function') {
+                window.refreshDashboard();
+            }
             if (typeof window.updateDashboardFacultyMetrics === 'function') {
                 window.updateDashboardFacultyMetrics();
             }
@@ -632,7 +679,7 @@
         } catch (e) {
             console.error(e);
             if (window.showToast) {
-                window.showToast("Error recording payment: " + (e.message || e), "error");
+                window.showToast("❌ Error recording payment: " + (e.message || e), "error");
             }
         } finally {
             if (submitBtn) {
@@ -642,101 +689,310 @@
         }
     };
 
-    // --- Salary History ---
+    // --- Tabbed Faculty Payment History, Financial Summary & Profile ---
+
+    function classifyFacultyCategory(catName) {
+        const lower = (catName || 'salary').toLowerCase().trim();
+        if (lower === 'salary') return 'salary';
+        if (lower === 'advance salary' || lower === 'advance') return 'advances';
+        return 'other';
+    }
 
     window.openFacultyHistoryModal = async function(id) {
         if (!currentFacultyList || currentFacultyList.length === 0) {
             try {
                 const raw = localStorage.getItem('school_accountant_faculty');
                 if (raw) currentFacultyList = JSON.parse(raw);
-            } catch(e) {}
+            } catch (e) {}
         }
         if (!currentFacultyList || currentFacultyList.length === 0) {
             try {
                 currentFacultyList = await window.DataService.getFaculty();
-            } catch(e) {}
+            } catch (e) {}
         }
         const faculty = (currentFacultyList || []).find(f => f.id === id || f.employee_id === id);
         if (!faculty) return;
 
-        document.getElementById('facultyHistoryTitle').innerText = `📜 Payment History: ${faculty.name}`;
-        
+        window._activeFacultyHistoryState = {
+            faculty,
+            history: [],
+            activeTab: 'all',
+            filtered: []
+        };
+
+        document.getElementById('facultyHistoryTitle').innerText = `📜 Financial Ledger: ${faculty.name}`;
+
         const summaryCard = document.getElementById('facultyHistorySummary');
         if (summaryCard) {
             summaryCard.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px 16px; border-radius: 12px; margin-bottom: 12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; background:#f8fafc; border:1px solid #e2e8f0; padding:12px 16px; border-radius:12px;">
                     <div>
-                        <div style="font-weight: 700; color: #0f172a;">${faculty.name} (${faculty.employee_id})</div>
-                        <div style="font-size: 12px; color: #64748b;">${faculty.designation} • Base: ${formatCurrency(faculty.base_salary)}</div>
+                        <div style="font-weight:700; color:#0f172a;">${escapeHtml(faculty.name)} <span style="font-family:monospace; color:#1e40af;">(${escapeHtml(faculty.employee_id || '')})</span></div>
+                        <div style="font-size:12px; color:#64748b;">${escapeHtml(faculty.department || '')} • ${escapeHtml(faculty.designation || '')} • Base Salary: ${formatCurrency(faculty.base_salary || faculty.salary || 0)}</div>
                     </div>
-                    <div style="text-align: right;" id="historyTotalDisbursedWrap">
-                        <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 600;">Total Disbursed</div>
-                        <div style="font-size: 16px; font-weight: 700; color: #b91c1c; font-family: monospace;" id="historyTotalDisbursed">Loading...</div>
+                    <div style="display:flex; gap:14px; flex-wrap:wrap; text-align:right;">
+                        <div><div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase;">Salary Paid</div><div id="fHistSumSalary" style="font-size:14px; font-weight:700; color:#0f7b3a;">₹0.00</div></div>
+                        <div><div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase;">Advances</div><div id="fHistSumAdvance" style="font-size:14px; font-weight:700; color:#b45309;">₹0.00</div></div>
+                        <div><div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase;">Other Expenses</div><div id="fHistSumOther" style="font-size:14px; font-weight:700; color:#1e40af;">₹0.00</div></div>
+                        <div><div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase;">Grand Total</div><div id="historyTotalDisbursed" style="font-size:14px; font-weight:700; color:#b91c1c;">Loading...</div></div>
                     </div>
                 </div>
             `;
         }
 
+        const catFilter = document.getElementById('fHistCategoryFilter');
+        if (catFilter) {
+            let opts = ['Salary', 'Advance Salary', 'Bonus', 'Incentives', 'Travel Expense', 'Reimbursements', 'Gifts / Goodies', 'Training / Workshop Expenses', 'Other Faculty Expenses'];
+            try {
+                if (window.DataService && typeof window.DataService.getFacultyExpenseCategories === 'function') {
+                    const cats = await window.DataService.getFacultyExpenseCategories({ includeInactive: false });
+                    if (Array.isArray(cats) && cats.length > 0) {
+                        opts = cats.map(c => c.name);
+                    }
+                }
+            } catch (e) {}
+            catFilter.innerHTML = '<option value="all">All Categories</option>' + opts.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+            catFilter.value = 'all';
+        }
+        if (document.getElementById('fHistDateFrom')) document.getElementById('fHistDateFrom').value = '';
+        if (document.getElementById('fHistDateTo')) document.getElementById('fHistDateTo').value = '';
+        if (document.getElementById('fHistModeFilter')) document.getElementById('fHistModeFilter').value = 'all';
+
         const tbody = document.getElementById('facultyHistoryBody');
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 32px; color: #64748b;">⏳ Loading payment history...</td></tr>';
+        if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:32px; color:#64748b;">⏳ Loading payment history...</td></tr>';
         document.getElementById('facultyHistoryModal').style.display = 'flex';
+        switchFacultyHistoryTab('all');
 
         try {
-            const history = await window.DataService.getFacultySalaryHistory(id);
-            tbody.innerHTML = '';
-            
-            let totalAmount = 0;
-            if (Array.isArray(history)) {
-                totalAmount = history.reduce((sum, h) => sum + (parseFloat(h.transactions ? h.transactions.amount : h.amount) || 0), 0);
-            }
+            const history = await window.DataService.getFacultySalaryHistory(faculty.id);
+            window._activeFacultyHistoryState.history = Array.isArray(history) ? history : [];
 
-            const totalEl = document.getElementById('historyTotalDisbursed');
-            if (totalEl) totalEl.textContent = formatCurrency(totalAmount);
-
-            if (!history || history.length === 0) {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="5" style="text-align: center; padding: 48px 16px; color: #64748b;">
-                            <div style="font-size: 32px; margin-bottom: 8px;">💸</div>
-                            <div style="font-weight: 600; color: #1e293b; font-size: 15px;">No disbursement records found</div>
-                            <div style="font-size: 13px; margin-top: 4px; color: #64748b;">No salary or expense payments have been issued to ${faculty.name} yet.</div>
-                        </td>
-                    </tr>
-                `;
-                return;
-            }
-
-            history.forEach(record => {
-                const tr = document.createElement('tr');
-                const txData = record.transactions || {};
-                const dateStr = txData.date ? new Date(txData.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : (record.payment_date || '-');
-                const amountVal = parseFloat(txData.amount !== undefined ? txData.amount : record.amount) || 0;
-                const amount = formatCurrency(amountVal);
-                
-                tr.innerHTML = `
-                    <td style="padding: 12px 14px; font-size: 13px; font-weight: 500; color: #1e293b;">${dateStr}</td>
-                    <td style="padding: 12px 14px;">
-                        <span style="display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; background: #fee2e2; color: #991b1b; border: 1px solid #fecaca;">
-                            ${record.expense_category || 'Salary'}
-                        </span>
-                    </td>
-                    <td style="padding: 12px 14px; font-size: 12px; color: #475569;">
-                        ${record.payment_mode || 'Cash'}
-                    </td>
-                    <td style="padding: 12px 14px; font-weight: 700; color: #b91c1c; text-align: right; font-family: monospace; font-size: 14px;">
-                        ${amount}
-                    </td>
-                    <td style="padding: 12px 14px; font-size: 12px; color: #64748b;">
-                        ${record.remarks || txData.particulars || '-'}
-                        ${record.voucher_number ? ` <span style="font-size: 11px; color: #94a3b8;">(${record.voucher_number})</span>` : ''}
-                    </td>
-                `;
-                tbody.appendChild(tr);
+            let salSum = 0, advSum = 0, othSum = 0;
+            window._activeFacultyHistoryState.history.forEach(h => {
+                const amt = parseFloat(h.transactions ? h.transactions.amount : h.amount) || 0;
+                const bucket = classifyFacultyCategory(h.expense_category);
+                if (bucket === 'salary') salSum += amt;
+                else if (bucket === 'advances') advSum += amt;
+                else othSum += amt;
             });
+
+            if (document.getElementById('fHistSumSalary')) document.getElementById('fHistSumSalary').textContent = formatCurrency(salSum);
+            if (document.getElementById('fHistSumAdvance')) document.getElementById('fHistSumAdvance').textContent = formatCurrency(advSum);
+            if (document.getElementById('fHistSumOther')) document.getElementById('fHistSumOther').textContent = formatCurrency(othSum);
+            if (document.getElementById('historyTotalDisbursed')) document.getElementById('historyTotalDisbursed').textContent = formatCurrency(salSum + advSum + othSum);
+
+            renderFacultyHistoryView();
         } catch (e) {
-            console.error("Error loading history:", e);
-            tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; padding: 28px; color: #b91c1c;">Failed to load history: ${e.message}</td></tr>`;
+            console.error("Error loading faculty history:", e);
+            if (tbody) {
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:28px; color:#b91c1c;">❌ Failed to load history from Supabase: ${escapeHtml(e.message || String(e))}</td></tr>`;
+            }
         }
+    };
+
+    window.switchFacultyHistoryTab = function(tabName) {
+        if (window._activeFacultyHistoryState) {
+            window._activeFacultyHistoryState.activeTab = tabName;
+        }
+        document.querySelectorAll('#facultyHistoryTabs .sub-tab-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.fhistTab === tabName);
+        });
+        const isDetail = tabName === 'summary' || tabName === 'profile';
+        const filterBar = document.getElementById('facultyHistoryFiltersBar');
+        const tablePanel = document.getElementById('facultyHistoryTablePanel');
+        const detailPanel = document.getElementById('facultyHistoryDetailPanel');
+        if (filterBar) filterBar.style.display = isDetail ? 'none' : 'flex';
+        if (tablePanel) tablePanel.style.display = isDetail ? 'none' : 'block';
+        if (detailPanel) detailPanel.style.display = isDetail ? 'block' : 'none';
+        renderFacultyHistoryView();
+    };
+
+    window.resetFacultyHistoryFilters = function() {
+        if (document.getElementById('fHistDateFrom')) document.getElementById('fHistDateFrom').value = '';
+        if (document.getElementById('fHistDateTo')) document.getElementById('fHistDateTo').value = '';
+        if (document.getElementById('fHistCategoryFilter')) document.getElementById('fHistCategoryFilter').value = 'all';
+        if (document.getElementById('fHistModeFilter')) document.getElementById('fHistModeFilter').value = 'all';
+        renderFacultyHistoryView();
+    };
+
+    window.renderFacultyHistoryView = function() {
+        const state = window._activeFacultyHistoryState;
+        if (!state) return;
+        const { faculty, history, activeTab } = state;
+
+        if (activeTab === 'profile') {
+            const detail = document.getElementById('facultyHistoryDetailPanel');
+            if (!detail) return;
+            detail.innerHTML = `
+                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:18px; display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px;">
+                    <div><div style="font-size:11px; color:#64748b; text-transform:uppercase;">Full Name</div><div style="font-weight:700; color:#0b2a4a;">${escapeHtml(faculty.name)}</div></div>
+                    <div><div style="font-size:11px; color:#64748b; text-transform:uppercase;">Employee ID</div><div style="font-family:monospace; font-weight:700;">${escapeHtml(faculty.employee_id || '—')}</div></div>
+                    <div><div style="font-size:11px; color:#64748b; text-transform:uppercase;">Department &amp; Designation</div><div>${escapeHtml(faculty.department || '—')} / ${escapeHtml(faculty.designation || '—')}</div></div>
+                    <div><div style="font-size:11px; color:#64748b; text-transform:uppercase;">Base Salary</div><div style="font-weight:700; color:#0f7b3a;">${formatCurrency(faculty.base_salary || faculty.salary || 0)}</div></div>
+                    <div><div style="font-size:11px; color:#64748b; text-transform:uppercase;">Phone</div><div>${escapeHtml(faculty.phone || '—')}</div></div>
+                    <div><div style="font-size:11px; color:#64748b; text-transform:uppercase;">Email</div><div>${escapeHtml(faculty.email || '—')}</div></div>
+                    <div><div style="font-size:11px; color:#64748b; text-transform:uppercase;">Joining Date</div><div>${escapeHtml(faculty.joining_date || '—')}</div></div>
+                    <div><div style="font-size:11px; color:#64748b; text-transform:uppercase;">Status</div><div><span class="badge-status ${faculty.status === 'inactive' ? 'pending' : 'paid'}">${escapeHtml((faculty.status || 'active').toUpperCase())}</span></div></div>
+                </div>
+            `;
+            return;
+        }
+
+        if (activeTab === 'summary') {
+            const detail = document.getElementById('facultyHistoryDetailPanel');
+            if (!detail) return;
+            const byCat = {};
+            const nowPrefix = new Date().toISOString().slice(0, 7);
+            let curMonthSal = 0;
+            history.forEach(h => {
+                const cat = h.expense_category || 'Salary';
+                const amt = parseFloat(h.transactions ? h.transactions.amount : h.amount) || 0;
+                byCat[cat] = (byCat[cat] || 0) + amt;
+                const dt = (h.transactions && h.transactions.date) || h.payment_date || '';
+                if (cat.toLowerCase() === 'salary' && dt.startsWith(nowPrefix)) curMonthSal += amt;
+            });
+            const base = Number(faculty.base_salary || faculty.salary) || 0;
+            const curPendingSal = Math.max(0, base - curMonthSal);
+            const catCards = Object.keys(byCat).length === 0
+                ? '<div class="text-muted">No disbursements recorded yet.</div>'
+                : Object.keys(byCat).sort().map(c => `
+                    <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px;">
+                        <div style="font-size:11px; color:#64748b; font-weight:700; text-transform:uppercase;">${escapeHtml(c)}</div>
+                        <div style="font-size:16px; font-weight:700; color:#0b2a4a; margin-top:4px;">${formatCurrency(byCat[c])}</div>
+                    </div>
+                `).join('');
+            detail.innerHTML = `
+                <div style="margin-bottom:14px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:12px; padding:14px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+                    <div><b>Current Month (${nowPrefix}) Base Salary:</b> ${formatCurrency(base)}</div>
+                    <div><b>Salary Paid (Excludes Advances/Expenses):</b> <span style="color:#0f7b3a; font-weight:700;">${formatCurrency(curMonthSal)}</span></div>
+                    <div><b>Salary Balance Remaining:</b> <span style="color:${curPendingSal > 0 ? '#b91c1c' : '#0f7b3a'}; font-weight:700;">${formatCurrency(curPendingSal)}</span></div>
+                </div>
+                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:10px;">
+                    ${catCards}
+                </div>
+            `;
+            return;
+        }
+
+        const from = document.getElementById('fHistDateFrom')?.value || '';
+        const to = document.getElementById('fHistDateTo')?.value || '';
+        const catF = document.getElementById('fHistCategoryFilter')?.value || 'all';
+        const modeF = document.getElementById('fHistModeFilter')?.value || 'all';
+
+        const filtered = history.filter(r => {
+            const cat = r.expense_category || 'Salary';
+            const bucket = classifyFacultyCategory(cat);
+            if (activeTab === 'salary' && bucket !== 'salary') return false;
+            if (activeTab === 'advances' && bucket !== 'advances') return false;
+            if (activeTab === 'other' && bucket !== 'other') return false;
+
+            const txData = r.transactions || {};
+            const dt = txData.date || r.payment_date || '';
+            const mode = (r.payment_mode || 'cash').toLowerCase();
+            if (from && dt < from) return false;
+            if (to && dt > to) return false;
+            if (catF !== 'all' && cat.toLowerCase() !== catF.toLowerCase()) return false;
+            if (modeF !== 'all' && mode !== modeF.toLowerCase()) return false;
+            return true;
+        });
+        state.filtered = filtered;
+
+        const tbody = document.getElementById('facultyHistoryBody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:32px; color:#64748b;">No disbursement records match the active tab/filters.</td></tr>`;
+            return;
+        }
+
+        filtered.forEach(record => {
+            const txData = record.transactions || {};
+            const dt = txData.date || record.payment_date || '-';
+            const dateStr = dt !== '-' ? new Date(dt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
+            const amountVal = parseFloat(txData.amount !== undefined ? txData.amount : record.amount) || 0;
+            const modeLabel = (record.payment_mode || 'cash').replace(/_/g, ' ').toUpperCase();
+            const partText = record.remarks || record.particulars || txData.particulars || '—';
+            const refText = record.reference_number ? ` • Ref: ${record.reference_number}` : '';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="padding:10px 12px; font-size:13px;">${escapeHtml(dateStr)}</td>
+                <td style="padding:10px 12px; font-family:monospace; font-size:12px;">${escapeHtml(record.voucher_number || '—')}</td>
+                <td style="padding:10px 12px;"><span class="badge-status partial">${escapeHtml(record.expense_category || 'Salary')}</span></td>
+                <td style="padding:10px 12px; font-size:12px; color:#475569;">${escapeHtml(partText + refText)}</td>
+                <td style="padding:10px 12px; font-weight:700; color:#b91c1c; text-align:right; font-family:monospace;">${formatCurrency(amountVal)}</td>
+                <td style="padding:10px 12px; font-size:12px;">${escapeHtml(modeLabel)}</td>
+                <td style="padding:10px 12px; text-align:center; white-space:nowrap;">
+                    <button type="button" class="btn btn-outline btn-xs btn-fh-voucher" title="Print Voucher">🖨️</button>
+                    ${record.transaction_id ? `<button type="button" class="btn btn-outline btn-xs btn-fh-tx" style="margin-left:4px;" title="Open in Transactions Ledger">Ledger</button>` : ''}
+                </td>
+            `;
+            tr.querySelector('.btn-fh-voucher')?.addEventListener('click', () => printFacultyVoucher(faculty, record, amountVal, dt));
+            tr.querySelector('.btn-fh-tx')?.addEventListener('click', () => {
+                hideFacultyHistoryModal();
+                const txBtn = document.querySelector('#tabNav button[data-tab="transactions"]');
+                if (txBtn) txBtn.click();
+                const txFacEl = document.getElementById('txFilterFaculty');
+                if (txFacEl) {
+                    txFacEl.value = faculty.id;
+                    if (typeof window.renderTransactions === 'function') window.renderTransactions();
+                }
+            });
+            tbody.appendChild(tr);
+        });
+    };
+
+    function printFacultyVoucher(faculty, record, amountVal, dateVal) {
+        const win = window.open('', '_blank');
+        if (!win) return;
+        win.document.write(`
+            <html><head><title>Payment Voucher ${escapeHtml(record.voucher_number || '')}</title>
+            <style>body{font-family:'Segoe UI',sans-serif;padding:28px;color:#0f172a}.box{border:2px solid #0b2a4a;border-radius:10px;padding:20px;max-width:680px;margin:auto}h2{margin:0 0 8px;color:#0b2a4a}.row{display:flex;justify-content:space-between;margin:8px 0;font-size:14px;border-bottom:1px dashed #cbd5e1;padding-bottom:6px}</style>
+            </head><body onload="window.print()">
+            <div class="box">
+                <h2>FACULTY EXPENSE / SALARY VOUCHER</h2>
+                <div class="row"><span><b>Voucher No:</b> ${escapeHtml(record.voucher_number || '—')}</span><span><b>Date:</b> ${escapeHtml(dateVal)}</span></div>
+                <div class="row"><span><b>Payee:</b> ${escapeHtml(faculty.name)} (${escapeHtml(faculty.employee_id || '')})</span><span><b>Department:</b> ${escapeHtml(faculty.department || '')}</span></div>
+                <div class="row"><span><b>Category:</b> ${escapeHtml(record.expense_category || 'Salary')}</span><span><b>Mode:</b> ${escapeHtml((record.payment_mode || 'cash').toUpperCase())} ${record.reference_number ? '(' + escapeHtml(record.reference_number) + ')' : ''}</span></div>
+                <div class="row"><span><b>Particulars / Month:</b> ${escapeHtml(record.remarks || record.salary_month || '—')}</span></div>
+                <div class="row" style="font-size:18px;font-weight:700;color:#0b2a4a;border:none;"><span>Total Amount Paid</span><span>${formatCurrency(amountVal)}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-top:42px;font-size:12px;"><span>Receiver Signature</span><span>Accountant / Principal</span></div>
+            </div>
+            </body></html>
+        `);
+        win.document.close();
+    }
+
+    window.exportFacultyHistoryCSV = function() {
+        const state = window._activeFacultyHistoryState;
+        if (!state || !state.faculty) return;
+        const rows = state.filtered && state.filtered.length > 0 ? state.filtered : state.history;
+        const csvRows = [['Date', 'Voucher', 'Category', 'Mode', 'Reference', 'Amount', 'Remarks']];
+        rows.forEach(r => {
+            const txData = r.transactions || {};
+            const dt = txData.date || r.payment_date || '';
+            const amt = parseFloat(txData.amount !== undefined ? txData.amount : r.amount) || 0;
+            csvRows.push([dt, r.voucher_number || '', r.expense_category || 'Salary', r.payment_mode || '', r.reference_number || '', amt.toFixed(2), r.remarks || '']);
+        });
+        const csv = csvRows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+        safeCsvDownload(csv, `faculty_history_${state.faculty.employee_id || 'staff'}.csv`);
+    };
+
+    window.printFacultyHistory = function() {
+        const state = window._activeFacultyHistoryState;
+        if (!state || !state.faculty) return;
+        const tbl = document.getElementById('facultyHistoryBody')?.closest('table')?.outerHTML || '';
+        const win = window.open('', '_blank');
+        if (!win) return;
+        win.document.write(`
+            <html><head><title>Faculty History - ${escapeHtml(state.faculty.name)}</title>
+            <style>body{font-family:'Segoe UI',sans-serif;padding:24px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}th{background:#f1f5f9}</style>
+            </head><body onload="window.print()">
+            <h2>Faculty Payment History — ${escapeHtml(state.faculty.name)} (${escapeHtml(state.faculty.employee_id || '')})</h2>
+            ${tbl}
+            </body></html>
+        `);
+        win.document.close();
     };
 
     window.hideFacultyHistoryModal = function() {
@@ -1193,8 +1449,19 @@
     window.initFacultyReports = async function() {
         populateReportMonths();
         populateReportDepartments();
+        populateReportFacultyPersons();
         await renderFacultyReports();
     };
+
+    function populateReportFacultyPersons() {
+        const sel = document.getElementById('facultyReportPersonSelect');
+        if (!sel) return;
+        const cur = sel.value;
+        const sorted = [...currentFacultyList].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        sel.innerHTML = '<option value="">Select Faculty Member...</option>' +
+            sorted.map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.name)} (${escapeHtml(f.employee_id || '')})</option>`).join('');
+        if (cur && sorted.some(f => f.id === cur)) sel.value = cur;
+    }
 
     function populateReportMonths() {
         const select = document.getElementById('facultyReportMonthSelect');
@@ -1204,7 +1471,6 @@
         const now = new Date();
         const monthsList = [];
 
-        // Generate past 18 months
         for (let i = 0; i < 18; i++) {
             const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
             const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -1216,7 +1482,6 @@
         html += `<option value="all">Full Year / All Time</option>`;
         select.innerHTML = html;
 
-        // Default to current month
         const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
             select.value = currentVal;
@@ -1242,47 +1507,51 @@
         select.innerHTML = html;
     }
 
+    function isSalaryPayment(p) {
+        return ((p.expense_category || 'Salary').toLowerCase().trim() === 'salary');
+    }
+
     // Render active report
     window.renderFacultyReports = async function() {
         const typeSelect = document.getElementById('facultyReportTypeSelect');
         const monthSelect = document.getElementById('facultyReportMonthSelect');
         const deptSelect = document.getElementById('facultyReportDeptSelect');
         const statusSelect = document.getElementById('facultyReportStatusSelect');
+        const personSelect = document.getElementById('facultyReportPersonSelect');
 
         const monthGroup = document.getElementById('facultyReportMonthGroup');
         const deptGroup = document.getElementById('facultyReportDeptGroup');
         const statusGroup = document.getElementById('facultyReportStatusGroup');
+        const personGroup = document.getElementById('facultyReportPersonGroup');
 
         const rType = typeSelect ? typeSelect.value : 'salary-register';
         const selectedMonth = monthSelect ? monthSelect.value : 'all';
         const selectedDept = deptSelect ? deptSelect.value : 'all';
         const selectedStatus = statusSelect ? statusSelect.value : 'all';
+        const selectedPersonId = personSelect ? personSelect.value : '';
 
-        // Adapt filter toolbar controls according to report type
-        if (rType === 'monthly-summary') {
-            if (monthGroup) monthGroup.style.display = 'none';
-            if (deptGroup) deptGroup.style.display = 'block';
-            if (statusGroup) statusGroup.style.display = 'none';
-        } else if (rType === 'dept-summary') {
-            if (monthGroup) monthGroup.style.display = 'block';
-            if (deptGroup) deptGroup.style.display = 'none';
-            if (statusGroup) statusGroup.style.display = 'none';
-        } else {
-            if (monthGroup) monthGroup.style.display = 'block';
-            if (deptGroup) deptGroup.style.display = 'block';
-            if (statusGroup) statusGroup.style.display = 'block';
-        }
+        if (personGroup) personGroup.style.display = rType === 'individual-history' ? 'block' : 'none';
+        if (monthGroup) monthGroup.style.display = rType === 'monthly-summary' ? 'none' : 'block';
+        if (deptGroup) deptGroup.style.display = (rType === 'dept-summary' || rType === 'individual-history') ? 'none' : 'block';
+        if (statusGroup) statusGroup.style.display = rType === 'salary-register' ? 'block' : 'none';
 
         const tbody = document.getElementById('facultyReportsTableBody');
         const thead = document.getElementById('facultyReportsTableHead');
         const tfoot = document.getElementById('facultyReportsTableFoot');
 
         if (tbody) {
-            tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; padding: 32px; color: #64748b;">⏳ Generating ${rType.replace('-', ' ')}...</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; padding: 32px; color: #64748b;">⏳ Generating ${escapeHtml(rType.replace(/-/g, ' '))}...</td></tr>`;
         }
+        if (tfoot) tfoot.innerHTML = '';
 
         try {
-            // Load payments across all faculty
+            if (!currentFacultyList || currentFacultyList.length === 0) {
+                const fl = await window.DataService.getFaculty();
+                if (Array.isArray(fl)) {
+                    currentFacultyList = fl;
+                    window.currentFacultyList = fl;
+                }
+            }
             currentReportPayments = await window.DataService.getAllFacultyPayments();
             if (!Array.isArray(currentReportPayments)) currentReportPayments = [];
 
@@ -1292,16 +1561,41 @@
                 renderMonthlySummaryReport(selectedDept);
             } else if (rType === 'dept-summary') {
                 renderDeptSummaryReport(selectedMonth);
+            } else if (rType === 'faculty-total') {
+                renderFacultyTotalExpensesReport(selectedMonth, selectedDept);
+            } else if (rType === 'category-summary') {
+                renderFacultyCategorySummaryReport(selectedMonth, selectedDept);
+            } else if (rType === 'travel-report') {
+                renderCategoryExpenseReport(selectedMonth, selectedDept, ['travel expense'], 'Travel Expense Report');
+            } else if (rType === 'reimbursement-report') {
+                renderCategoryExpenseReport(selectedMonth, selectedDept, ['reimbursements', 'reimbursement'], 'Reimbursements Report');
+            } else if (rType === 'bonus-incentive-report') {
+                renderCategoryExpenseReport(selectedMonth, selectedDept, ['bonus', 'incentives', 'incentive'], 'Bonus & Incentives Report');
+            } else if (rType === 'advance-report') {
+                renderCategoryExpenseReport(selectedMonth, selectedDept, ['advance salary', 'advance'], 'Advance Salary Report');
+            } else if (rType === 'gifts-report') {
+                renderCategoryExpenseReport(selectedMonth, selectedDept, ['gifts / goodies', 'gifts', 'goodies'], 'Gifts / Goodies Report');
+            } else if (rType === 'training-report') {
+                renderCategoryExpenseReport(selectedMonth, selectedDept, ['training / workshop expenses', 'training'], 'Training / Workshop Expenses Report');
+            } else if (rType === 'other-faculty-report') {
+                renderCategoryExpenseReport(selectedMonth, selectedDept, ['other faculty expenses', 'other'], 'Other Faculty Expenses Report');
+            } else if (rType === 'salary-vs-nonsalary') {
+                renderSalaryVsNonSalaryReport(selectedMonth, selectedDept);
+            } else if (rType === 'individual-history') {
+                renderIndividualHistoryReport(selectedPersonId, selectedMonth);
             }
         } catch (e) {
             console.error("Error rendering faculty report:", e);
+            if (thead) thead.innerHTML = '';
             if (tbody) {
-                tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; padding: 24px; color: #b91c1c;">⚠️ Error generating report: ${escapeHtml(e.message || String(e))}</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; padding: 24px; color: #b91c1c;">❌ Database error loading report: ${escapeHtml(e.message || String(e))}</td></tr>`;
             }
+            const countEl = document.getElementById('facultyReportTableCount');
+            if (countEl) countEl.textContent = 'Report error';
         }
     };
 
-    // ─── REPORT 1: SALARY REGISTER ───
+    // ─── REPORT 1: SALARY REGISTER (STRICTLY SALARY ONLY) ───
     function renderSalaryRegisterReport(month, dept, statusFilter) {
         const thead = document.getElementById('facultyReportsTableHead');
         const tbody = document.getElementById('facultyReportsTableBody');
@@ -1313,10 +1607,10 @@
                 <th style="padding: 10px 14px;">Faculty Member</th>
                 <th style="padding: 10px 14px;">Department &amp; Role</th>
                 <th style="padding: 10px 14px; text-align: right; width: 115px;">Base Salary</th>
-                <th style="padding: 10px 14px; text-align: right; width: 115px;">Disbursed</th>
+                <th style="padding: 10px 14px; text-align: right; width: 115px;">Salary Paid</th>
                 <th style="padding: 10px 14px; text-align: right; width: 115px;">Pending</th>
                 <th style="padding: 10px 14px; text-align: center; width: 100px;">Status</th>
-                <th style="padding: 10px 14px; width: 160px;">Last Payment</th>
+                <th style="padding: 10px 14px; width: 160px;">Last Salary Voucher</th>
                 <th style="padding: 10px 14px; text-align: center; width: 95px;">Action</th>
             </tr>
         `;
@@ -1326,21 +1620,15 @@
             activeStaff = activeStaff.filter(f => f.department === dept);
         }
 
-        let totalCommitted = 0;
-        let totalDisbursed = 0;
-        let totalPending = 0;
-        let displayedRows = 0;
+        let totalCommitted = 0, totalDisbursed = 0, totalPending = 0, displayedRows = 0;
 
         const rowsHtml = activeStaff.map(faculty => {
             const baseSalary = faculty.salary !== undefined ? Number(faculty.salary) : (Number(faculty.base_salary) || 0);
-            
-            // Filter payments for this staff member in this month
             const staffPayments = currentReportPayments.filter(p => {
+                if (!isSalaryPayment(p)) return false;
                 const matchId = (p.faculty_id === faculty.id || (p.employee_id && p.employee_id === faculty.employee_id));
                 if (!matchId) return false;
-                if (month !== 'all') {
-                    return p.payment_date && p.payment_date.startsWith(month);
-                }
+                if (month !== 'all') return p.payment_date && p.payment_date.startsWith(month);
                 return true;
             });
 
@@ -1348,40 +1636,28 @@
             const pending = Math.max(0, baseSalary - disbursed);
 
             let rowStatus = 'unpaid';
-            if (disbursed >= baseSalary && baseSalary > 0) {
-                rowStatus = 'paid';
-            } else if (disbursed > 0) {
-                rowStatus = 'partial';
-            }
-
-            // Apply status filter
-            if (statusFilter !== 'all' && rowStatus !== statusFilter) {
-                return '';
-            }
+            if (disbursed >= baseSalary && baseSalary > 0) rowStatus = 'paid';
+            else if (disbursed > 0) rowStatus = 'partial';
+            if (statusFilter !== 'all' && rowStatus !== statusFilter) return '';
 
             totalCommitted += baseSalary;
             totalDisbursed += disbursed;
             totalPending += pending;
             displayedRows++;
 
-            // Status Badge
-            let statusBadge = '';
-            if (rowStatus === 'paid') {
-                statusBadge = '<span style="display:inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 700; background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0;">🟢 Paid</span>';
-            } else if (rowStatus === 'partial') {
-                statusBadge = '<span style="display:inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 700; background: #fef3c7; color: #b45309; border: 1px solid #fde68a;">🟡 Partial</span>';
-            } else {
-                statusBadge = '<span style="display:inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 700; background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca;">🔴 Unpaid</span>';
-            }
+            const statusBadge = rowStatus === 'paid'
+                ? '<span style="display:inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 700; background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0;">🟢 Paid</span>'
+                : (rowStatus === 'partial'
+                    ? '<span style="display:inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 700; background: #fef3c7; color: #b45309; border: 1px solid #fde68a;">🟡 Partial</span>'
+                    : '<span style="display:inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 700; background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca;">🔴 Unpaid</span>');
 
-            // Last Payment Detail
-            let lastPayText = '<span style="color: #94a3b8; font-size: 11px;">No records</span>';
+            let lastPayText = '<span style="color: #94a3b8; font-size: 11px;">No salary vouchers</span>';
             if (staffPayments.length > 0) {
                 const last = staffPayments[0];
                 const dtStr = last.payment_date ? new Date(last.payment_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-';
                 lastPayText = `
-                    <div style="font-size: 12px; font-weight: 600; color: #1e293b;">${dtStr} (${last.payment_mode || 'Cash'})</div>
-                    <div style="font-size: 11px; color: #64748b;">${escapeHtml(last.voucher_number || last.category || '')}</div>
+                    <div style="font-size: 12px; font-weight: 600; color: #1e293b;">${dtStr} (${escapeHtml(last.payment_mode || 'Cash')})</div>
+                    <div style="font-size: 11px; color: #64748b;">${escapeHtml(last.voucher_number || 'Salary')}</div>
                 `;
             }
 
@@ -1393,25 +1669,17 @@
                     <td style="padding: 10px 14px; font-weight: 700; font-family: monospace; color: #0b2a4a;">${escapeHtml(faculty.employee_id || '-')}</td>
                     <td style="padding: 10px 14px;">
                         <div style="display: flex; align-items: center; gap: 8px;">
-                            <div style="width: 28px; height: 28px; border-radius: 50%; background: ${avatarBg}; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 11px; flex-shrink: 0;">
-                                ${initials}
-                            </div>
-                            <span style="font-weight: 600; color: #1e293b;">${escapeHtml(faculty.name)}</span>
+                            <div style="width: 28px; height: 28px; border-radius: 50%; background: ${avatarBg}; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 11px; flex-shrink: 0;">${initials}</div>
+                            <a href="#" onclick="openFacultyHistoryModal('${faculty.id}'); return false;" style="font-weight: 600; color: #1e293b; text-decoration:none;">${escapeHtml(faculty.name)}</a>
                         </div>
                     </td>
                     <td style="padding: 10px 14px; font-size: 12px; color: #475569;">
                         <div><b>${escapeHtml(faculty.department)}</b></div>
                         <div style="color: #64748b; font-size: 11px;">${escapeHtml(faculty.designation)}</div>
                     </td>
-                    <td style="padding: 10px 14px; text-align: right; font-weight: 600; font-family: monospace;">
-                        ${formatCurrency(baseSalary)}
-                    </td>
-                    <td style="padding: 10px 14px; text-align: right; font-weight: 700; color: #16a34a; font-family: monospace;">
-                        ${formatCurrency(disbursed)}
-                    </td>
-                    <td style="padding: 10px 14px; text-align: right; font-weight: 700; color: ${pending > 0 ? '#b91c1c' : '#64748b'}; font-family: monospace;">
-                        ${formatCurrency(pending)}
-                    </td>
+                    <td style="padding: 10px 14px; text-align: right; font-weight: 600; font-family: monospace;">${formatCurrency(baseSalary)}</td>
+                    <td style="padding: 10px 14px; text-align: right; font-weight: 700; color: #16a34a; font-family: monospace;">${formatCurrency(disbursed)}</td>
+                    <td style="padding: 10px 14px; text-align: right; font-weight: 700; color: ${pending > 0 ? '#b91c1c' : '#64748b'}; font-family: monospace;">${formatCurrency(pending)}</td>
                     <td style="padding: 10px 14px; text-align: center;">${statusBadge}</td>
                     <td style="padding: 10px 14px;">${lastPayText}</td>
                     <td style="padding: 10px 14px; text-align: center;">
@@ -1421,33 +1689,27 @@
             `;
         }).join('');
 
-        if (displayedRows === 0) {
-            tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; padding: 36px; color: #64748b;">No faculty records match the selected month/department/status filters.</td></tr>`;
-        } else {
-            tbody.innerHTML = rowsHtml;
-        }
+        tbody.innerHTML = displayedRows === 0
+            ? `<tr><td colspan="9" style="text-align: center; padding: 36px; color: #64748b;">No faculty records match the selected filters.</td></tr>`
+            : rowsHtml;
 
-        // Footer Totals
         tfoot.innerHTML = `
             <tr>
-                <td colspan="3" style="padding: 12px 14px; text-align: right; font-size: 13px;">TOTALS (${displayedRows} Staff):</td>
+                <td colspan="3" style="padding: 12px 14px; text-align: right; font-size: 13px;">SALARY TOTALS (${displayedRows} Staff):</td>
                 <td style="padding: 12px 14px; text-align: right; font-family: monospace; color: #0b2a4a; font-size: 13px;">${formatCurrency(totalCommitted)}</td>
                 <td style="padding: 12px 14px; text-align: right; font-family: monospace; color: #16a34a; font-size: 13px;">${formatCurrency(totalDisbursed)}</td>
                 <td style="padding: 12px 14px; text-align: right; font-family: monospace; color: #b91c1c; font-size: 13px;">${formatCurrency(totalPending)}</td>
                 <td colspan="3" style="padding: 12px 14px; text-align: left; font-size: 12px; color: #475569;">
-                    Payout Rate: <b>${totalCommitted > 0 ? (totalDisbursed / totalCommitted * 100).toFixed(1) : 0}%</b>
+                    Salary Payout Rate: <b>${totalCommitted > 0 ? (totalDisbursed / totalCommitted * 100).toFixed(1) : 0}%</b>
                 </td>
             </tr>
         `;
-
-        // Update Report KPI Cards
         updateReportKpis(displayedRows, totalCommitted, totalDisbursed, totalPending);
-        
         const countEl = document.getElementById('facultyReportTableCount');
-        if (countEl) countEl.textContent = `Showing ${displayedRows} staff salary records`;
+        if (countEl) countEl.textContent = `Showing ${displayedRows} staff salary records (excludes non-salary expenses)`;
     }
 
-    // ─── REPORT 2: MONTHLY SUMMARY ───
+    // ─── REPORT 2: MONTHLY SALARY SUMMARY (STRICTLY SALARY ONLY) ───
     function renderMonthlySummaryReport(deptFilter) {
         const thead = document.getElementById('facultyReportsTableHead');
         const tbody = document.getElementById('facultyReportsTableBody');
@@ -1458,7 +1720,7 @@
                 <th style="padding: 10px 14px;">Month &amp; Year</th>
                 <th style="padding: 10px 14px; text-align: center; width: 110px;">Staff in Scope</th>
                 <th style="padding: 10px 14px; text-align: right; width: 140px;">Base Payroll</th>
-                <th style="padding: 10px 14px; text-align: right; width: 140px;">Disbursed</th>
+                <th style="padding: 10px 14px; text-align: right; width: 140px;">Salary Disbursed</th>
                 <th style="padding: 10px 14px; text-align: right; width: 140px;">Pending Balance</th>
                 <th style="padding: 10px 14px; text-align: center; width: 130px;">Disbursement %</th>
                 <th style="padding: 10px 14px; text-align: center; width: 110px;">Vouchers</th>
@@ -1466,38 +1728,26 @@
         `;
 
         let scopedStaff = currentFacultyList.filter(f => f.status !== 'inactive');
-        if (deptFilter !== 'all') {
-            scopedStaff = scopedStaff.filter(f => f.department === deptFilter);
-        }
+        if (deptFilter !== 'all') scopedStaff = scopedStaff.filter(f => f.department === deptFilter);
         const monthlyStaffCommitment = scopedStaff.reduce((sum, f) => sum + (Number(f.salary || f.base_salary) || 0), 0);
 
-        // Gather all distinct months from payments + last 12 months
+        const salaryPayments = currentReportPayments.filter(isSalaryPayment);
         const monthSet = new Set();
-        currentReportPayments.forEach(p => {
-            if (p.payment_date && p.payment_date.length >= 7) {
-                monthSet.add(p.payment_date.slice(0, 7));
-            }
+        salaryPayments.forEach(p => {
+            if (p.payment_date && p.payment_date.length >= 7) monthSet.add(p.payment_date.slice(0, 7));
         });
         const now = new Date();
         for (let i = 0; i < 6; i++) {
             const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
             monthSet.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
         }
-
         const sortedMonths = Array.from(monthSet).sort().reverse();
 
-        let sumDisbursed = 0;
-        let sumCommitted = 0;
-        let sumPending = 0;
-        let totalVouchers = 0;
-
+        let sumDisbursed = 0, sumCommitted = 0, sumPending = 0, totalVouchers = 0;
         const rowsHtml = sortedMonths.map(mStr => {
             const [y, m] = mStr.split('-');
-            const dateObj = new Date(Number(y), Number(m) - 1, 1);
-            const monthLabel = dateObj.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-
-            // Payments in this month
-            const mPayments = currentReportPayments.filter(p => {
+            const monthLabel = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+            const mPayments = salaryPayments.filter(p => {
                 if (!p.payment_date || !p.payment_date.startsWith(mStr)) return false;
                 if (deptFilter !== 'all') {
                     const fac = currentFacultyList.find(f => f.id === p.faculty_id || f.employee_id === p.employee_id);
@@ -1505,7 +1755,6 @@
                 }
                 return true;
             });
-
             const disbursed = mPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
             const committed = monthlyStaffCommitment;
             const pending = Math.max(0, committed - disbursed);
@@ -1523,18 +1772,13 @@
                     <td style="padding: 10px 14px; text-align: right; font-family: monospace;">${formatCurrency(committed)}</td>
                     <td style="padding: 10px 14px; text-align: right; font-weight: 700; color: #16a34a; font-family: monospace;">${formatCurrency(disbursed)}</td>
                     <td style="padding: 10px 14px; text-align: right; font-weight: 700; color: ${pending > 0 ? '#b91c1c' : '#64748b'}; font-family: monospace;">${formatCurrency(pending)}</td>
-                    <td style="padding: 10px 14px; text-align: center;">
-                        <span style="display:inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 700; ${Number(pct) >= 100 ? 'background:#dcfce7; color:#15803d;' : (Number(pct) > 0 ? 'background:#fef3c7; color:#b45309;' : 'background:#fee2e2; color:#b91c1c;')}">
-                            ${pct}%
-                        </span>
-                    </td>
+                    <td style="padding: 10px 14px; text-align: center;"><span class="badge-status ${Number(pct) >= 100 ? 'paid' : (Number(pct) > 0 ? 'partial' : 'pending')}">${pct}%</span></td>
                     <td style="padding: 10px 14px; text-align: center; font-weight: 600; color: #475569;">${mPayments.length}</td>
                 </tr>
             `;
         }).join('');
 
         tbody.innerHTML = rowsHtml;
-
         tfoot.innerHTML = `
             <tr>
                 <td style="padding: 12px 14px; font-size: 13px;">TOTAL (${sortedMonths.length} Months):</td>
@@ -1546,14 +1790,12 @@
                 <td style="padding: 12px 14px; text-align: center; font-weight: 700;">${totalVouchers}</td>
             </tr>
         `;
-
         updateReportKpis(scopedStaff.length, sumCommitted, sumDisbursed, sumPending);
-
         const countEl = document.getElementById('facultyReportTableCount');
-        if (countEl) countEl.textContent = `Showing monthly summary across ${sortedMonths.length} historical cycles`;
+        if (countEl) countEl.textContent = `Showing monthly Salary summary across ${sortedMonths.length} cycles`;
     }
 
-    // ─── REPORT 3: DEPARTMENT-WISE SUMMARY ───
+    // ─── REPORT 3: DEPARTMENT-WISE SUMMARY (SALARY vs NON-SALARY) ───
     function renderDeptSummaryReport(month) {
         const thead = document.getElementById('facultyReportsTableHead');
         const tbody = document.getElementById('facultyReportsTableBody');
@@ -1562,32 +1804,27 @@
         thead.innerHTML = `
             <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0;">
                 <th style="padding: 10px 14px;">Department</th>
-                <th style="padding: 10px 14px; text-align: center; width: 100px;">Faculty Count</th>
-                <th style="padding: 10px 14px; text-align: right; width: 140px;">Monthly Budget</th>
-                <th style="padding: 10px 14px; text-align: right; width: 140px;">Disbursed</th>
-                <th style="padding: 10px 14px; text-align: right; width: 140px;">Pending Balance</th>
-                <th style="padding: 10px 14px; text-align: right; width: 120px;">Average Salary</th>
-                <th style="padding: 10px 14px; text-align: center; width: 110px;">Payroll Share</th>
+                <th style="padding: 10px 14px; text-align: center;">Staff</th>
+                <th style="padding: 10px 14px; text-align: right;">Payroll Budget</th>
+                <th style="padding: 10px 14px; text-align: right;">Salary Paid</th>
+                <th style="padding: 10px 14px; text-align: right;">Non-Salary Expenses</th>
+                <th style="padding: 10px 14px; text-align: right;">Total Disbursed</th>
+                <th style="padding: 10px 14px; text-align: right;">Pending Salary</th>
+                <th style="padding: 10px 14px; text-align: center;">Payroll Share</th>
             </tr>
         `;
 
         const activeStaff = currentFacultyList.filter(f => f.status !== 'inactive');
         const totalSchoolPayroll = activeStaff.reduce((sum, f) => sum + (Number(f.salary || f.base_salary) || 0), 0);
-
-        // Group by department
         const deptGroups = {};
         activeStaff.forEach(f => {
             const d = f.department || 'General';
             if (!deptGroups[d]) deptGroups[d] = [];
             deptGroups[d].push(f);
         });
-
         const sortedDepts = Object.keys(deptGroups).sort();
 
-        let sumStaff = 0;
-        let sumBudget = 0;
-        let sumDisbursed = 0;
-        let sumPending = 0;
+        let sumStaff = 0, sumBudget = 0, sumSalary = 0, sumOther = 0, sumPending = 0;
 
         const rowsHtml = sortedDepts.map(deptName => {
             const staffList = deptGroups[deptName];
@@ -1596,63 +1833,336 @@
             const staffIds = new Set(staffList.map(f => f.id));
             const staffEmpIds = new Set(staffList.map(f => f.employee_id));
 
-            // Payments to this dept
             const deptPayments = currentReportPayments.filter(p => {
-                const match = staffIds.has(p.faculty_id) || staffEmpIds.has(p.employee_id);
-                if (!match) return false;
-                if (month !== 'all') {
-                    return p.payment_date && p.payment_date.startsWith(month);
-                }
-                return true;
+                if (!(staffIds.has(p.faculty_id) || staffEmpIds.has(p.employee_id))) return false;
+                return month === 'all' || (p.payment_date && p.payment_date.startsWith(month));
             });
 
-            const disbursed = deptPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-            const pending = Math.max(0, budget - disbursed);
-            const avgSalary = count > 0 ? (budget / count) : 0;
+            const salPaid = deptPayments.filter(isSalaryPayment).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+            const otherPaid = deptPayments.filter(p => !isSalaryPayment(p)).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+            const pending = Math.max(0, budget - salPaid);
             const sharePct = totalSchoolPayroll > 0 ? (budget / totalSchoolPayroll * 100).toFixed(1) : 0;
 
-            sumStaff += count;
-            sumBudget += budget;
-            sumDisbursed += disbursed;
-            sumPending += pending;
-
+            sumStaff += count; sumBudget += budget; sumSalary += salPaid; sumOther += otherPaid; sumPending += pending;
             const deptStyle = getDeptColor(deptName);
 
             return `
                 <tr>
-                    <td style="padding: 10px 14px;">
-                        <span style="display: inline-block; padding: 3px 10px; border-radius: 6px; font-weight: 600; font-size: 12px; background: ${deptStyle.bg}; color: ${deptStyle.text}; border: 1px solid ${deptStyle.border};">
-                            🏛️ ${escapeHtml(deptName)}
-                        </span>
-                    </td>
+                    <td style="padding: 10px 14px;"><span style="display:inline-block; padding:3px 10px; border-radius:6px; font-weight:600; font-size:12px; background:${deptStyle.bg}; color:${deptStyle.text}; border:1px solid ${deptStyle.border};">🏛️ ${escapeHtml(deptName)}</span></td>
                     <td style="padding: 10px 14px; text-align: center; font-weight: 600;">${count}</td>
                     <td style="padding: 10px 14px; text-align: right; font-family: monospace;">${formatCurrency(budget)}</td>
-                    <td style="padding: 10px 14px; text-align: right; font-weight: 700; color: #16a34a; font-family: monospace;">${formatCurrency(disbursed)}</td>
+                    <td style="padding: 10px 14px; text-align: right; font-weight: 700; color: #16a34a; font-family: monospace;">${formatCurrency(salPaid)}</td>
+                    <td style="padding: 10px 14px; text-align: right; font-weight: 600; color: #1e40af; font-family: monospace;">${formatCurrency(otherPaid)}</td>
+                    <td style="padding: 10px 14px; text-align: right; font-weight: 700; font-family: monospace;">${formatCurrency(salPaid + otherPaid)}</td>
                     <td style="padding: 10px 14px; text-align: right; font-weight: 700; color: ${pending > 0 ? '#b91c1c' : '#64748b'}; font-family: monospace;">${formatCurrency(pending)}</td>
-                    <td style="padding: 10px 14px; text-align: right; font-family: monospace; color: #475569;">${formatCurrency(avgSalary)}</td>
                     <td style="padding: 10px 14px; text-align: center; font-weight: 700; color: #0b2a4a;">${sharePct}%</td>
                 </tr>
             `;
         }).join('');
 
-        tbody.innerHTML = rowsHtml;
-
+        tbody.innerHTML = sortedDepts.length ? rowsHtml : `<tr><td colspan="8" class="text-center text-muted" style="padding:24px;">No departments found.</td></tr>`;
         tfoot.innerHTML = `
             <tr>
-                <td style="padding: 12px 14px; font-size: 13px;">TOTAL (${sortedDepts.length} Departments):</td>
+                <td style="padding: 12px 14px; font-size: 13px;">TOTAL (${sortedDepts.length} Depts):</td>
                 <td style="padding: 12px 14px; text-align: center; font-weight: 700;">${sumStaff}</td>
                 <td style="padding: 12px 14px; text-align: right; font-family: monospace;">${formatCurrency(sumBudget)}</td>
-                <td style="padding: 12px 14px; text-align: right; font-family: monospace; color: #16a34a;">${formatCurrency(sumDisbursed)}</td>
+                <td style="padding: 12px 14px; text-align: right; font-family: monospace; color: #16a34a;">${formatCurrency(sumSalary)}</td>
+                <td style="padding: 12px 14px; text-align: right; font-family: monospace; color: #1e40af;">${formatCurrency(sumOther)}</td>
+                <td style="padding: 12px 14px; text-align: right; font-family: monospace;">${formatCurrency(sumSalary + sumOther)}</td>
                 <td style="padding: 12px 14px; text-align: right; font-family: monospace; color: #b91c1c;">${formatCurrency(sumPending)}</td>
-                <td style="padding: 12px 14px; text-align: right; font-family: monospace;">${formatCurrency(sumStaff > 0 ? sumBudget / sumStaff : 0)}</td>
                 <td style="padding: 12px 14px; text-align: center; font-weight: 700;">100%</td>
             </tr>
         `;
-
-        updateReportKpis(sumStaff, sumBudget, sumDisbursed, sumPending);
-
+        updateReportKpis(sumStaff, sumBudget, sumSalary + sumOther, sumPending);
         const countEl = document.getElementById('facultyReportTableCount');
-        if (countEl) countEl.textContent = `Showing department breakdown across ${sortedDepts.length} departments`;
+        if (countEl) countEl.textContent = `Showing department expense breakdown across ${sortedDepts.length} departments`;
+    }
+
+    // ─── REPORT 4: FACULTY-WISE TOTAL EXPENSES ───
+    function renderFacultyTotalExpensesReport(month, dept) {
+        const thead = document.getElementById('facultyReportsTableHead');
+        const tbody = document.getElementById('facultyReportsTableBody');
+        const tfoot = document.getElementById('facultyReportsTableFoot');
+
+        thead.innerHTML = `
+            <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0;">
+                <th>Emp ID</th><th>Faculty Name</th><th>Department</th>
+                <th style="text-align:right;">Salary Paid</th><th style="text-align:right;">Advances</th>
+                <th style="text-align:right;">Other Expenses</th><th style="text-align:right;">Total Expenses</th>
+                <th style="text-align:center;">Tx Count</th><th style="text-align:center;">History</th>
+            </tr>
+        `;
+
+        let staff = currentFacultyList.filter(f => dept === 'all' || f.department === dept);
+        let grandSal = 0, grandAdv = 0, grandOth = 0, grandBase = 0;
+
+        const rows = staff.map(f => {
+            const pays = currentReportPayments.filter(p =>
+                (p.faculty_id === f.id || (p.employee_id && p.employee_id === f.employee_id)) &&
+                (month === 'all' || (p.payment_date && p.payment_date.startsWith(month)))
+            );
+            let sal = 0, adv = 0, oth = 0;
+            pays.forEach(p => {
+                const amt = Number(p.amount) || 0;
+                const b = classifyFacultyCategory(p.expense_category);
+                if (b === 'salary') sal += amt;
+                else if (b === 'advances') adv += amt;
+                else oth += amt;
+            });
+            grandSal += sal; grandAdv += adv; grandOth += oth;
+            grandBase += Number(f.base_salary || f.salary) || 0;
+            return `
+                <tr>
+                    <td style="font-family:monospace; font-weight:700;">${escapeHtml(f.employee_id || '-')}</td>
+                    <td><b>${escapeHtml(f.name)}</b></td>
+                    <td>${escapeHtml(f.department || '-')}</td>
+                    <td style="text-align:right; color:#16a34a; font-weight:600;">${formatCurrency(sal)}</td>
+                    <td style="text-align:right; color:#b45309; font-weight:600;">${formatCurrency(adv)}</td>
+                    <td style="text-align:right; color:#1e40af; font-weight:600;">${formatCurrency(oth)}</td>
+                    <td style="text-align:right; font-weight:700; color:#b91c1c;">${formatCurrency(sal + adv + oth)}</td>
+                    <td style="text-align:center;">${pays.length}</td>
+                    <td style="text-align:center;"><button type="button" class="btn btn-outline btn-xs" onclick="openFacultyHistoryModal('${f.id}')">View</button></td>
+                </tr>
+            `;
+        }).join('');
+
+        tbody.innerHTML = staff.length ? rows : '<tr><td colspan="9" class="text-center text-muted" style="padding:24px;">No faculty records found.</td></tr>';
+        tfoot.innerHTML = `<tr><td colspan="3" style="text-align:right;">TOTALS:</td><td style="text-align:right;">${formatCurrency(grandSal)}</td><td style="text-align:right;">${formatCurrency(grandAdv)}</td><td style="text-align:right;">${formatCurrency(grandOth)}</td><td style="text-align:right; color:#b91c1c;">${formatCurrency(grandSal + grandAdv + grandOth)}</td><td colspan="2"></td></tr>`;
+        updateReportKpis(staff.length, grandBase, grandSal + grandAdv + grandOth, Math.max(0, grandBase - grandSal));
+        const countEl = document.getElementById('facultyReportTableCount');
+        if (countEl) countEl.textContent = `Showing total faculty expenses across ${staff.length} staff`;
+    }
+
+    // ─── REPORT 4B: SUBCATEGORY-WISE FACULTY EXPENSE SUMMARY ───
+    function renderFacultyCategorySummaryReport(month, dept) {
+        const thead = document.getElementById('facultyReportsTableHead');
+        const tbody = document.getElementById('facultyReportsTableBody');
+        const tfoot = document.getElementById('facultyReportsTableFoot');
+
+        thead.innerHTML = `
+            <tr style="background:#f8fafc; border-bottom:2px solid #e2e8f0;">
+                <th>Faculty Expense Subcategory</th>
+                <th style="text-align:center;">Type</th>
+                <th style="text-align:center;">Vouchers</th>
+                <th style="text-align:center;">Staff Count</th>
+                <th style="text-align:right;">Total Amount</th>
+                <th style="text-align:center;">Share %</th>
+            </tr>
+        `;
+
+        const scopedPayments = currentReportPayments.filter(p => {
+            if (month !== 'all' && (!p.payment_date || !p.payment_date.startsWith(month))) return false;
+            if (dept !== 'all') {
+                const fac = currentFacultyList.find(f => f.id === p.faculty_id || f.employee_id === p.employee_id);
+                if (!fac || fac.department !== dept) return false;
+            }
+            return true;
+        });
+
+        const canonicalNames = ['Salary', 'Advance Salary', 'Bonus', 'Incentives', 'Travel Expense', 'Reimbursements', 'Gifts / Goodies', 'Training / Workshop Expenses', 'Other Faculty Expenses'];
+        const buckets = new Map();
+        canonicalNames.forEach(n => buckets.set(n.toLowerCase(), { name: n, count: 0, total: 0, staff: new Set() }));
+
+        let grandTotal = 0;
+        let grandCount = 0;
+        const grandStaff = new Set();
+        scopedPayments.forEach(p => {
+            const raw = String(p.expense_category || 'Salary').trim();
+            const key = raw.toLowerCase();
+            if (!buckets.has(key)) buckets.set(key, { name: raw, count: 0, total: 0, staff: new Set() });
+            const b = buckets.get(key);
+            const amt = Number(p.amount) || 0;
+            b.count++;
+            b.total += amt;
+            if (p.faculty_id) {
+                b.staff.add(p.faculty_id);
+                grandStaff.add(p.faculty_id);
+            }
+            grandTotal += amt;
+            grandCount++;
+        });
+
+        const list = Array.from(buckets.values());
+        tbody.innerHTML = list.map(b => {
+            const bucketType = classifyFacultyCategory(b.name);
+            const typeBadge = bucketType === 'salary'
+                ? '<span class="badge-status paid">Salary</span>'
+                : (bucketType === 'advances' ? '<span class="badge-status partial">Advance</span>' : '<span class="badge-status pending">Non-Salary</span>');
+            const pct = grandTotal > 0 ? ((b.total / grandTotal) * 100).toFixed(1) : '0.0';
+            return `
+                <tr>
+                    <td><b>${escapeHtml(b.name)}</b></td>
+                    <td style="text-align:center;">${typeBadge}</td>
+                    <td style="text-align:center;">${b.count}</td>
+                    <td style="text-align:center;">${b.staff.size}</td>
+                    <td style="text-align:right; font-weight:700; color:${b.total > 0 ? '#b91c1c' : '#64748b'};">${formatCurrency(b.total)}</td>
+                    <td style="text-align:center;"><b>${pct}%</b></td>
+                </tr>
+            `;
+        }).join('');
+
+        tfoot.innerHTML = `<tr><td colspan="2" style="text-align:right;">TOTAL (${list.length} Subcategories):</td><td style="text-align:center;">${grandCount}</td><td style="text-align:center;">${grandStaff.size}</td><td style="text-align:right; color:#b91c1c;">${formatCurrency(grandTotal)}</td><td style="text-align:center;">100%</td></tr>`;
+        updateReportKpis(grandStaff.size, 0, grandTotal, 0);
+        const countEl = document.getElementById('facultyReportTableCount');
+        if (countEl) countEl.textContent = `Showing ${list.length} faculty expense subcategories`;
+    }
+
+    // ─── REPORT 5-8: CATEGORY-SPECIFIC REPORTS ───
+    function renderCategoryExpenseReport(month, dept, targetCategories, titleLabel) {
+        const thead = document.getElementById('facultyReportsTableHead');
+        const tbody = document.getElementById('facultyReportsTableBody');
+        const tfoot = document.getElementById('facultyReportsTableFoot');
+
+        thead.innerHTML = `
+            <tr style="background:#f8fafc; border-bottom:2px solid #e2e8f0;">
+                <th>Date</th><th>Voucher</th><th>Emp ID</th><th>Faculty Name</th><th>Department</th><th>Category</th><th>Mode &amp; Ref</th><th>Remarks</th><th style="text-align:right;">Amount</th>
+            </tr>
+        `;
+
+        const matches = currentReportPayments.filter(p => {
+            const catLower = (p.expense_category || '').toLowerCase().trim();
+            if (!targetCategories.includes(catLower)) return false;
+            if (month !== 'all' && (!p.payment_date || !p.payment_date.startsWith(month))) return false;
+            if (dept !== 'all') {
+                const fac = currentFacultyList.find(f => f.id === p.faculty_id || f.employee_id === p.employee_id);
+                if (!fac || fac.department !== dept) return false;
+            }
+            return true;
+        });
+
+        let total = 0;
+        const staffSet = new Set();
+        tbody.innerHTML = matches.length === 0
+            ? `<tr><td colspan="9" class="text-center text-muted" style="padding:28px;">No ${escapeHtml(titleLabel)} records found for selected filters.</td></tr>`
+            : matches.map(p => {
+                const amt = Number(p.amount) || 0;
+                total += amt;
+                if (p.faculty_id) staffSet.add(p.faculty_id);
+                const fac = currentFacultyList.find(f => f.id === p.faculty_id || f.employee_id === p.employee_id);
+                return `
+                    <tr>
+                        <td>${escapeHtml(p.payment_date || '-')}</td>
+                        <td style="font-family:monospace;">${escapeHtml(p.voucher_number || '—')}</td>
+                        <td style="font-family:monospace;">${escapeHtml(p.employee_id || (fac && fac.employee_id) || '-')}</td>
+                        <td><b>${escapeHtml(p.faculty_name || (fac && fac.name) || '-')}</b></td>
+                        <td>${escapeHtml(p.department || (fac && fac.department) || '-')}</td>
+                        <td><span class="badge-status partial">${escapeHtml(p.expense_category || '')}</span></td>
+                        <td>${escapeHtml((p.payment_mode || 'cash').toUpperCase())}${p.reference_number ? ' (' + escapeHtml(p.reference_number) + ')' : ''}</td>
+                        <td>${escapeHtml(p.remarks || p.particulars || '—')}</td>
+                        <td style="text-align:right; font-weight:700; color:#b91c1c;">${formatCurrency(amt)}</td>
+                    </tr>
+                `;
+            }).join('');
+
+        tfoot.innerHTML = `<tr><td colspan="8" style="text-align:right;">TOTAL (${matches.length} records):</td><td style="text-align:right; color:#b91c1c;">${formatCurrency(total)}</td></tr>`;
+        updateReportKpis(staffSet.size, 0, total, 0);
+        const countEl = document.getElementById('facultyReportTableCount');
+        if (countEl) countEl.textContent = `${titleLabel}: ${matches.length} disbursement(s) totalling ${formatCurrency(total)}`;
+    }
+
+    // ─── REPORT 9: SALARY VS NON-SALARY BREAKDOWN ───
+    function renderSalaryVsNonSalaryReport(month, dept) {
+        const thead = document.getElementById('facultyReportsTableHead');
+        const tbody = document.getElementById('facultyReportsTableBody');
+        const tfoot = document.getElementById('facultyReportsTableFoot');
+
+        thead.innerHTML = `
+            <tr style="background:#f8fafc; border-bottom:2px solid #e2e8f0;">
+                <th>Emp ID</th><th>Faculty Name</th><th>Department</th>
+                <th style="text-align:right;">Salary Only</th>
+                <th style="text-align:right;">Advances</th>
+                <th style="text-align:right;">Non-Salary Other</th>
+                <th style="text-align:right;">Grand Total</th>
+                <th style="text-align:center;">Salary Share %</th>
+            </tr>
+        `;
+        const staff = currentFacultyList.filter(f => dept === 'all' || f.department === dept);
+        let sumSal = 0, sumAdv = 0, sumNon = 0;
+
+        tbody.innerHTML = staff.length === 0
+            ? '<tr><td colspan="8" class="text-center text-muted" style="padding:24px;">No staff found.</td></tr>'
+            : staff.map(f => {
+                const pays = currentReportPayments.filter(p =>
+                    (p.faculty_id === f.id || (p.employee_id && p.employee_id === f.employee_id)) &&
+                    (month === 'all' || (p.payment_date && p.payment_date.startsWith(month)))
+                );
+                let sal = 0, adv = 0, non = 0;
+                pays.forEach(p => {
+                    const a = Number(p.amount) || 0;
+                    const b = classifyFacultyCategory(p.expense_category);
+                    if (b === 'salary') sal += a;
+                    else if (b === 'advances') adv += a;
+                    else non += a;
+                });
+                const tot = sal + adv + non;
+                const share = tot > 0 ? ((sal / tot) * 100).toFixed(1) : '0.0';
+                sumSal += sal; sumAdv += adv; sumNon += non;
+                return `
+                    <tr>
+                        <td style="font-family:monospace;">${escapeHtml(f.employee_id || '-')}</td>
+                        <td><b>${escapeHtml(f.name)}</b></td>
+                        <td>${escapeHtml(f.department || '-')}</td>
+                        <td style="text-align:right; color:#0f7b3a; font-weight:700;">${formatCurrency(sal)}</td>
+                        <td style="text-align:right; color:#b45309;">${formatCurrency(adv)}</td>
+                        <td style="text-align:right; color:#1e40af;">${formatCurrency(non)}</td>
+                        <td style="text-align:right; font-weight:700;">${formatCurrency(tot)}</td>
+                        <td style="text-align:center;"><b>${share}%</b></td>
+                    </tr>
+                `;
+            }).join('');
+
+        tfoot.innerHTML = `<tr><td colspan="3" style="text-align:right;">TOTALS:</td><td style="text-align:right; color:#0f7b3a;">${formatCurrency(sumSal)}</td><td style="text-align:right; color:#b45309;">${formatCurrency(sumAdv)}</td><td style="text-align:right; color:#1e40af;">${formatCurrency(sumNon)}</td><td style="text-align:right;">${formatCurrency(sumSal + sumAdv + sumNon)}</td><td style="text-align:center;">${(sumSal + sumAdv + sumNon) > 0 ? ((sumSal / (sumSal + sumAdv + sumNon)) * 100).toFixed(1) : 0}%</td></tr>`;
+        updateReportKpis(staff.length, 0, sumSal + sumAdv + sumNon, 0);
+        const countEl = document.getElementById('facultyReportTableCount');
+        if (countEl) countEl.textContent = `Salary vs Non-Salary separation for ${staff.length} staff`;
+    }
+
+    // ─── REPORT 10: INDIVIDUAL FACULTY HISTORY ───
+    function renderIndividualHistoryReport(personId, month) {
+        const thead = document.getElementById('facultyReportsTableHead');
+        const tbody = document.getElementById('facultyReportsTableBody');
+        const tfoot = document.getElementById('facultyReportsTableFoot');
+
+        thead.innerHTML = `
+            <tr style="background:#f8fafc; border-bottom:2px solid #e2e8f0;">
+                <th>Date</th><th>Voucher</th><th>Category</th><th>Salary Month</th><th>Mode &amp; Ref</th><th>Remarks</th><th style="text-align:right;">Amount</th>
+            </tr>
+        `;
+        if (!personId) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted" style="padding:28px;">Select a Faculty Member above to view individual payment history.</td></tr>';
+            updateReportKpis(0, 0, 0, 0);
+            return;
+        }
+        const fac = currentFacultyList.find(f => f.id === personId);
+        const pays = currentReportPayments.filter(p =>
+            (p.faculty_id === personId || (fac && p.employee_id === fac.employee_id)) &&
+            (month === 'all' || (p.payment_date && p.payment_date.startsWith(month)))
+        );
+        let sal = 0, total = 0;
+        tbody.innerHTML = pays.length === 0
+            ? '<tr><td colspan="7" class="text-center text-muted" style="padding:24px;">No payments recorded for this faculty member in selected period.</td></tr>'
+            : pays.map(p => {
+                const a = Number(p.amount) || 0;
+                total += a;
+                if (isSalaryPayment(p)) sal += a;
+                return `
+                    <tr>
+                        <td>${escapeHtml(p.payment_date || '-')}</td>
+                        <td style="font-family:monospace;">${escapeHtml(p.voucher_number || '—')}</td>
+                        <td><span class="badge-status partial">${escapeHtml(p.expense_category || 'Salary')}</span></td>
+                        <td>${escapeHtml(p.salary_month || '—')}</td>
+                        <td>${escapeHtml((p.payment_mode || 'cash').toUpperCase())}${p.reference_number ? ' (' + escapeHtml(p.reference_number) + ')' : ''}</td>
+                        <td>${escapeHtml(p.remarks || p.particulars || '—')}</td>
+                        <td style="text-align:right; font-weight:700; color:#b91c1c;">${formatCurrency(a)}</td>
+                    </tr>
+                `;
+            }).join('');
+
+        const base = fac ? (Number(fac.base_salary || fac.salary) || 0) : 0;
+        tfoot.innerHTML = `<tr><td colspan="6" style="text-align:right;">TOTAL (${pays.length} payments):</td><td style="text-align:right; color:#b91c1c;">${formatCurrency(total)}</td></tr>`;
+        updateReportKpis(fac ? 1 : 0, base, total, Math.max(0, base - sal));
+        const countEl = document.getElementById('facultyReportTableCount');
+        if (countEl) countEl.textContent = `Showing ${pays.length} payment(s) for ${fac ? fac.name : 'faculty'}`;
     }
 
     function updateReportKpis(staffCount, committed, disbursed, pending) {
@@ -1817,6 +2327,7 @@
     };
 
     window.updateDashboardFacultyMetrics = async function(totalSchoolExpense = 0) {
+        if (!window.currentUser) return;
         try {
             const facultyList = await window.DataService.getFaculty();
             const allPayments = await window.DataService.getAllFacultyPayments();
@@ -1828,7 +2339,9 @@
             const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
             const nowMonthName = now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 
-            const monthPayments = (allPayments || []).filter(p => p.payment_date && p.payment_date.startsWith(currentMonthStr));
+            const monthPayments = (allPayments || []).filter(p =>
+                p.payment_date && p.payment_date.startsWith(currentMonthStr) && isSalaryPayment(p)
+            );
             const disbursed = monthPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
             const pending = Math.max(0, committed - disbursed);
 
